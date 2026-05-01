@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # Set env vars before importing handler
-os.environ["AUDIT_TABLE"] = "test-audit-table"
-os.environ["EVENTS_TABLE"] = "test-events-table"
+os.environ["AUDIT_TABLE_NAME"] = "test-audit-table"
+os.environ["EVENTS_TABLE_NAME"] = "test-events-table"
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("AWS_ACCESS_KEY_ID", "test")
 os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
@@ -15,10 +15,25 @@ os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test")
 import handler  # noqa: E402
 
 
-def _make_event(method: str, path: str, body: dict | str | None = None) -> dict:
+def _make_event(method: str, path: str, body=None) -> dict:
     if isinstance(body, dict):
         body = json.dumps(body)
     return {"httpMethod": method, "path": path, "body": body}
+
+
+def _patch_tables(audit_items=None, event_items=None):
+    """Return a Table factory mock that returns separate mocks per table name."""
+    audit_table = MagicMock()
+    events_table = MagicMock()
+    audit_table.scan.return_value = {"Items": audit_items or []}
+    events_table.scan.return_value = {"Items": event_items or []}
+
+    def factory(name):
+        if name == os.environ["AUDIT_TABLE_NAME"]:
+            return audit_table
+        return events_table
+
+    return factory, audit_table, events_table
 
 
 class TestPostAudit(unittest.TestCase):
@@ -26,11 +41,10 @@ class TestPostAudit(unittest.TestCase):
 
     def _call(self, body):
         event = _make_event("POST", "/audit", body)
-        with patch.object(handler.dynamodb, "Table") as mock_table_factory:
-            mock_table = MagicMock()
-            mock_table_factory.return_value = mock_table
+        factory, audit_table, events_table = _patch_tables()
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
             result = handler.handler(event, None)
-        return result, mock_table
+        return result, audit_table, events_table
 
     def test_valid_request_returns_201(self):
         body = {
@@ -40,94 +54,121 @@ class TestPostAudit(unittest.TestCase):
             "repository": "org/payments-api",
             "owner": "platform-team",
         }
-        result, mock_table = self._call(body)
+        result, audit_table, events_table = self._call(body)
         self.assertEqual(result["statusCode"], 201)
         resp = json.loads(result["body"])
         self.assertIn("audit_id", resp)
         self.assertEqual(resp["service_name"], "payments-api")
-        self.assertEqual(resp["environment"], "dev")
-        self.assertEqual(resp["status"], "healthy")
         self.assertEqual(resp["score"], 95)
-        # DynamoDB PutItem should be called at least once (audit + event)
-        self.assertGreaterEqual(mock_table.put_item.call_count, 1)
+        audit_table.put_item.assert_called_once()
+        events_table.put_item.assert_called_once()  # audit_created event
 
     def test_missing_body_returns_400(self):
-        result, _ = self._call(None)
+        result, _, events_table = self._call(None)
         self.assertEqual(result["statusCode"], 400)
-        resp = json.loads(result["body"])
-        self.assertIn("error", resp)
+        events_table.put_item.assert_called_once()  # validation_failure event
 
     def test_invalid_environment_returns_400(self):
         body = {"service_name": "payments-api", "environment": "unknown", "status": "healthy"}
-        result, _ = self._call(body)
+        result, _, _ = self._call(body)
         self.assertEqual(result["statusCode"], 400)
         resp = json.loads(result["body"])
-        self.assertIn("errors", resp)
         self.assertTrue(any("environment" in e for e in resp["errors"]))
 
     def test_invalid_status_returns_400(self):
         body = {"service_name": "payments-api", "environment": "dev", "status": "ok"}
-        result, _ = self._call(body)
+        result, _, _ = self._call(body)
         self.assertEqual(result["statusCode"], 400)
         resp = json.loads(result["body"])
-        self.assertIn("errors", resp)
         self.assertTrue(any("status" in e for e in resp["errors"]))
 
     def test_service_name_too_short_returns_400(self):
         body = {"service_name": "ab", "environment": "dev", "status": "healthy"}
-        result, _ = self._call(body)
+        result, _, _ = self._call(body)
         self.assertEqual(result["statusCode"], 400)
 
     def test_missing_service_name_returns_400(self):
         body = {"environment": "dev", "status": "healthy"}
-        result, _ = self._call(body)
+        result, _, _ = self._call(body)
         self.assertEqual(result["statusCode"], 400)
 
     def test_score_without_optional_fields(self):
         body = {"service_name": "my-service", "environment": "prod", "status": "healthy"}
-        result, _ = self._call(body)
+        result, _, _ = self._call(body)
         self.assertEqual(result["statusCode"], 201)
         resp = json.loads(result["body"])
         # 70 base + 5 (name) + 5 (env) + 5 (status) = 85
         self.assertEqual(resp["score"], 85)
+        # Findings include "missing" entries when optional fields are absent
+        self.assertIn("repository metadata missing", resp["findings"])
+        self.assertIn("service owner missing", resp["findings"])
 
     def test_operational_event_stored_on_validation_failure(self):
         body = {"service_name": "ab", "environment": "dev", "status": "healthy"}
-        event = _make_event("POST", "/audit", body)
-        with patch.object(handler.dynamodb, "Table") as mock_table_factory:
-            mock_table = MagicMock()
-            mock_table_factory.return_value = mock_table
-            result = handler.handler(event, None)
+        result, _, events_table = self._call(body)
         self.assertEqual(result["statusCode"], 400)
-        # _store_event calls put_item on the events table
-        self.assertGreaterEqual(mock_table.put_item.call_count, 1)
+        events_table.put_item.assert_called_once()
 
 
 class TestGetSummary(unittest.TestCase):
-    """Tests for GET /summary."""
+    """Tests for GET /summary — Operational Intelligence endpoint."""
 
-    def _call(self, scan_items):
+    def _call(self, audit_items, event_items=None):
         event = _make_event("GET", "/summary")
-        with patch.object(handler.dynamodb, "Table") as mock_table_factory:
-            mock_table = MagicMock()
-            mock_table.scan.return_value = {"Items": scan_items}
-            mock_table_factory.return_value = mock_table
+        factory, _, _ = _patch_tables(audit_items, event_items)
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
             result = handler.handler(event, None)
         return result
 
-    def test_returns_200(self):
+    def test_returns_200_with_aggregates(self):
         items = [
-            {"score": 95, "environment": "dev", "status": "healthy"},
-            {"score": 85, "environment": "prod", "status": "degraded"},
+            {
+                "score": 95,
+                "environment": "dev",
+                "status": "healthy",
+                "findings": ["service owner captured", "repository ownership captured"],
+            },
+            {
+                "score": 85,
+                "environment": "prod",
+                "status": "degraded",
+                "findings": ["service owner missing", "repository metadata missing"],
+            },
         ]
         result = self._call(items)
         self.assertEqual(result["statusCode"], 200)
         resp = json.loads(result["body"])
         self.assertEqual(resp["total_services_audited"], 2)
-        self.assertIn("average_score", resp)
-        self.assertIn("by_environment", resp)
-        self.assertIn("by_status", resp)
+        self.assertEqual(resp["average_score"], 90)
+        self.assertEqual(resp["by_environment"], {"dev": 1, "prod": 1})
+        self.assertEqual(resp["by_status"], {"healthy": 1, "degraded": 1})
+        self.assertIn("top_findings", resp)
+        self.assertIn("recent_operational_events", resp)
         self.assertIn("generated_at", resp)
+
+    def test_top_findings_ranked_by_frequency(self):
+        items = [
+            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing", "X"]},
+            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing", "Y"]},
+            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing"]},
+        ]
+        result = self._call(items)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["top_findings"][0], "service owner missing")
+
+    def test_recent_operational_events_sorted_desc(self):
+        events = [
+            {"event_type": "audit_created", "route": "/audit", "method": "POST", "created_at": 100},
+            {"event_type": "validation_failure", "route": "/audit", "method": "POST", "created_at": 300},
+            {"event_type": "summary_generated", "route": "/summary", "method": "GET", "created_at": 200},
+        ]
+        result = self._call([], event_items=events)
+        resp = json.loads(result["body"])
+        recent = resp["recent_operational_events"]
+        # Sorted descending by created_at
+        timestamps = [e["created_at"] for e in recent]
+        self.assertEqual(timestamps, sorted(timestamps, reverse=True))
+        self.assertEqual(recent[0]["event_type"], "validation_failure")
 
     def test_empty_table_returns_200(self):
         result = self._call([])
@@ -135,6 +176,15 @@ class TestGetSummary(unittest.TestCase):
         resp = json.loads(result["body"])
         self.assertEqual(resp["total_services_audited"], 0)
         self.assertEqual(resp["average_score"], 0)
+        self.assertEqual(resp["top_findings"], [])
+        self.assertEqual(resp["recent_operational_events"], [])
+
+    def test_summary_event_is_recorded(self):
+        event = _make_event("GET", "/summary")
+        factory, _, events_table = _patch_tables([], [])
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
+            handler.handler(event, None)
+        events_table.put_item.assert_called_once()
 
 
 class TestUnsupportedRoutes(unittest.TestCase):
@@ -142,11 +192,9 @@ class TestUnsupportedRoutes(unittest.TestCase):
 
     def _call(self, method, path):
         event = _make_event(method, path)
-        with patch.object(handler.dynamodb, "Table") as mock_table_factory:
-            mock_table = MagicMock()
-            mock_table_factory.return_value = mock_table
-            result = handler.handler(event, None)
-        return result
+        factory, _, _ = _patch_tables()
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
+            return handler.handler(event, None)
 
     def test_get_audit_returns_405(self):
         result = self._call("GET", "/audit")
@@ -165,6 +213,66 @@ class TestUnsupportedRoutes(unittest.TestCase):
         self.assertEqual(result["statusCode"], 405)
 
 
+class TestPostSummarize(unittest.TestCase):
+    """Tests for POST /summarize — optional Bedrock-powered summary."""
+
+    def _call(self):
+        event = _make_event("POST", "/summarize")
+        factory, audit_table, events_table = _patch_tables(audit_items=[
+            {"score": 90, "environment": "dev", "status": "healthy", "findings": ["service owner missing"]},
+        ])
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
+            result = handler.handler(event, None)
+        return result, events_table
+
+    def test_returns_501_when_disabled(self):
+        with patch.object(handler, "ENABLE_BEDROCK_SUMMARY", False):
+            result, events_table = self._call()
+        self.assertEqual(result["statusCode"], 501)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["error"], "bedrock_disabled")
+        # summary_disabled operational event is recorded
+        events_table.put_item.assert_called_once()
+
+    def test_returns_200_when_enabled_and_bedrock_succeeds(self):
+        with patch.object(handler, "ENABLE_BEDROCK_SUMMARY", True), \
+             patch.object(handler, "invoke_bedrock_model", return_value="Platform is healthy."):
+            result, events_table = self._call()
+        self.assertEqual(result["statusCode"], 200)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["summary"], "Platform is healthy.")
+        self.assertIn("summary_id", resp)
+        self.assertIn("model_id", resp)
+        self.assertIn("generated_at", resp)
+        # ai_summary_generated event recorded
+        events_table.put_item.assert_called_once()
+
+    def test_returns_500_when_bedrock_fails(self):
+        with patch.object(handler, "ENABLE_BEDROCK_SUMMARY", True), \
+             patch.object(handler, "invoke_bedrock_model", side_effect=RuntimeError("boom")):
+            result, events_table = self._call()
+        self.assertEqual(result["statusCode"], 500)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["error"], "ai_summary_failed")
+        # Internal exception details are not exposed
+        self.assertNotIn("boom", resp["message"])
+        # ai_summary_failed event recorded
+        events_table.put_item.assert_called_once()
+
+    def test_build_bedrock_prompt_includes_aggregate_data(self):
+        aggregate = {
+            "total_services_audited": 3,
+            "average_score": 85,
+            "by_environment": {"dev": 2, "prod": 1},
+            "by_status": {"healthy": 2, "degraded": 1},
+            "top_findings": ["service owner missing"],
+        }
+        prompt = handler.build_bedrock_prompt(aggregate)
+        self.assertIn("3", prompt)
+        self.assertIn("85", prompt)
+        self.assertIn("service owner missing", prompt)
+
+
 class TestScoreCalculation(unittest.TestCase):
     """Tests for the score helper directly."""
 
@@ -176,14 +284,15 @@ class TestScoreCalculation(unittest.TestCase):
             "repository": "org/my-api",
             "owner": "team",
         }
-        score, findings = handler._calculate_score(body)
+        score, _ = handler._calculate_score(body)
         self.assertEqual(score, 95)
 
     def test_min_score(self):
         body = {"service_name": "ab", "environment": "invalid", "status": "invalid"}
-        score, _ = handler._calculate_score(body)
-        # service_name too short → no +5; bad env/status → no +5 each
+        score, findings = handler._calculate_score(body)
         self.assertEqual(score, 70)
+        self.assertIn("repository metadata missing", findings)
+        self.assertIn("service owner missing", findings)
 
     def test_partial_score_no_optional(self):
         body = {"service_name": "my-api", "environment": "dev", "status": "healthy"}
@@ -217,6 +326,28 @@ class TestParseBody(unittest.TestCase):
         body, err = handler._parse_body(event)
         self.assertIsNone(body)
         self.assertIsNotNone(err)
+
+
+class TestAggregation(unittest.TestCase):
+    """Tests for aggregation helpers in isolation."""
+
+    def test_aggregate_audits_empty(self):
+        agg = handler._aggregate_audits([])
+        self.assertEqual(agg["total_services_audited"], 0)
+        self.assertEqual(agg["average_score"], 0)
+        self.assertEqual(agg["top_findings"], [])
+
+    def test_aggregate_audits_counts(self):
+        items = [
+            {"score": 90, "environment": "dev", "status": "healthy", "findings": ["a", "b"]},
+            {"score": 80, "environment": "dev", "status": "degraded", "findings": ["a"]},
+        ]
+        agg = handler._aggregate_audits(items)
+        self.assertEqual(agg["total_services_audited"], 2)
+        self.assertEqual(agg["average_score"], 85)
+        self.assertEqual(agg["by_environment"], {"dev": 2})
+        self.assertEqual(agg["by_status"], {"healthy": 1, "degraded": 1})
+        self.assertEqual(agg["top_findings"][0], "a")
 
 
 if __name__ == "__main__":

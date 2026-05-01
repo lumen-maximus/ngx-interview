@@ -2,22 +2,36 @@
 Platform Ops Auditor — Lambda handler.
 
 Routes:
-  POST /audit  — validate service metadata, calculate score, store audit record
-  GET  /summary — aggregate audit records and return operational intelligence
+  POST /audit     — validate service metadata, calculate score, store audit record
+  GET  /summary   — aggregate audit records and operational events for Operational Intelligence
+  POST /summarize — optional Amazon Bedrock-generated platform posture summary (disabled by default)
 """
 
 import json
 import os
 import time
 import uuid
+from collections import Counter
 
 import boto3
 
-AUDIT_TABLE = os.environ.get("AUDIT_TABLE", "")
-EVENTS_TABLE = os.environ.get("EVENTS_TABLE", "")
+# ---------------------------------------------------------------------------
+# Configuration (read at cold start)
+# ---------------------------------------------------------------------------
+
+# Support both legacy (AUDIT_TABLE) and current (AUDIT_TABLE_NAME) names so the
+# handler is resilient to env-variable renames during refactoring.
+AUDIT_TABLE = os.environ.get("AUDIT_TABLE_NAME") or os.environ.get("AUDIT_TABLE", "")
+EVENTS_TABLE = os.environ.get("EVENTS_TABLE_NAME") or os.environ.get("EVENTS_TABLE", "")
+
+ENABLE_BEDROCK_SUMMARY = os.environ.get("ENABLE_BEDROCK_SUMMARY", "false").lower() == "true"
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
 
 VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
 VALID_STATUSES = {"healthy", "degraded", "unhealthy"}
+
+RECENT_EVENTS_LIMIT = 5
+TOP_FINDINGS_LIMIT = 5
 
 dynamodb = boto3.resource("dynamodb")
 
@@ -85,7 +99,7 @@ def _validate_audit(body: dict) -> list[str]:
 
 
 def _calculate_score(body: dict) -> tuple[int, list[str]]:
-    """Return (score, findings)."""
+    """Return (score, findings) for an audit submission."""
     score = 70
     findings = []
 
@@ -104,10 +118,14 @@ def _calculate_score(body: dict) -> tuple[int, list[str]]:
     if body.get("repository") and isinstance(body.get("repository"), str):
         score += 5
         findings.append("repository ownership captured")
+    else:
+        findings.append("repository metadata missing")
 
     if body.get("owner") and isinstance(body.get("owner"), str):
         score += 5
         findings.append("service owner captured")
+    else:
+        findings.append("service owner missing")
 
     findings.append("service metadata captured")
 
@@ -137,7 +155,133 @@ def _store_event(
             item["related_audit_id"] = related_audit_id
         dynamodb.Table(EVENTS_TABLE).put_item(Item=item)
     except Exception:  # noqa: BLE001
+        # Operational event storage is best-effort; never break a request.
         pass
+
+
+# ---------------------------------------------------------------------------
+# Aggregation (used by GET /summary and POST /summarize)
+# ---------------------------------------------------------------------------
+
+
+def _scan_all(table_name: str) -> list[dict]:
+    """Scan an entire DynamoDB table, following pagination tokens. MVP scale only."""
+    table = dynamodb.Table(table_name)
+    items: list[dict] = []
+    response = table.scan()
+    items.extend(response.get("Items", []))
+    while "LastEvaluatedKey" in response:
+        response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+        items.extend(response.get("Items", []))
+    return items
+
+
+def _aggregate_audits(audit_items: list[dict]) -> dict:
+    """Compute aggregate statistics across audit records."""
+    total = len(audit_items)
+    avg_score = round(sum(int(i.get("score", 0)) for i in audit_items) / total) if total else 0
+
+    by_environment: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    finding_counter: Counter[str] = Counter()
+
+    for item in audit_items:
+        env = item.get("environment", "unknown")
+        by_environment[env] = by_environment.get(env, 0) + 1
+        st = item.get("status", "unknown")
+        by_status[st] = by_status.get(st, 0) + 1
+        for finding in item.get("findings", []) or []:
+            if isinstance(finding, str):
+                finding_counter[finding] += 1
+
+    top_findings = [f for f, _ in finding_counter.most_common(TOP_FINDINGS_LIMIT)]
+
+    return {
+        "total_services_audited": total,
+        "average_score": avg_score,
+        "by_environment": by_environment,
+        "by_status": by_status,
+        "top_findings": top_findings,
+    }
+
+
+def _recent_operational_events(events: list[dict], limit: int = RECENT_EVENTS_LIMIT) -> list[dict]:
+    """Return the most recent operational events sorted by created_at descending."""
+    sorted_events = sorted(
+        events,
+        key=lambda e: int(e.get("created_at", 0)),
+        reverse=True,
+    )
+    return [
+        {
+            "event_type": e.get("event_type", ""),
+            "route": e.get("route", ""),
+            "method": e.get("method", ""),
+            "created_at": int(e.get("created_at", 0)),
+        }
+        for e in sorted_events[:limit]
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Bedrock helpers (only invoked when ENABLE_BEDROCK_SUMMARY is true)
+# ---------------------------------------------------------------------------
+
+
+def build_bedrock_prompt(aggregate: dict) -> str:
+    """Build a concise natural-language prompt from aggregate operational data."""
+    return (
+        "You are a platform engineering assistant. "
+        "Write a short (under 120 words) operational posture summary for the platform "
+        "based on the following aggregated audit data:\n"
+        f"- Total services audited: {aggregate['total_services_audited']}\n"
+        f"- Average operational score: {aggregate['average_score']}\n"
+        f"- Services by environment: {json.dumps(aggregate['by_environment'])}\n"
+        f"- Services by status: {json.dumps(aggregate['by_status'])}\n"
+        f"- Top findings: {json.dumps(aggregate['top_findings'])}\n"
+        "Be concise and actionable. Highlight risk areas if any."
+    )
+
+
+def invoke_bedrock_model(prompt: str, model_id: str) -> str:
+    """Invoke a Bedrock foundation model and return the generated text.
+
+    Model-specific request and response shapes are isolated here so this is the
+    only function that needs to change to support a different model family.
+    """
+    client = boto3.client("bedrock-runtime")
+    body = json.dumps(
+        {
+            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "inferenceConfig": {"maxTokens": 400, "temperature": 0.2},
+        }
+    )
+    response = client.invoke_model(modelId=model_id, body=body, contentType="application/json")
+    payload = json.loads(response["body"].read())
+    # Amazon Nova / Converse-style response shape
+    try:
+        return payload["output"]["message"]["content"][0]["text"]
+    except (KeyError, IndexError, TypeError):
+        # Fallback for other model families (Anthropic, etc.)
+        if "completion" in payload:
+            return str(payload["completion"])
+        if "outputText" in payload:
+            return str(payload["outputText"])
+        return json.dumps(payload)
+
+
+def summarize_platform_posture() -> dict:
+    """Aggregate audit records and request a Bedrock-generated summary."""
+    audit_items = _scan_all(AUDIT_TABLE)
+    aggregate = _aggregate_audits(audit_items)
+    prompt = build_bedrock_prompt(aggregate)
+    summary_text = invoke_bedrock_model(prompt, BEDROCK_MODEL_ID)
+    return {
+        "summary_id": str(uuid.uuid4()),
+        "summary": summary_text,
+        "model_id": BEDROCK_MODEL_ID,
+        "generated_at": int(time.time()),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -202,32 +346,68 @@ def _handle_post_audit(event: dict) -> dict:
 
 
 def _handle_get_summary(event: dict) -> dict:  # noqa: ARG001
-    response = dynamodb.Table(AUDIT_TABLE).scan()
-    items = response.get("Items", [])
+    audit_items = _scan_all(AUDIT_TABLE)
+    event_items = _scan_all(EVENTS_TABLE) if EVENTS_TABLE else []
 
-    total = len(items)
-    avg_score = round(sum(int(i.get("score", 0)) for i in items) / total) if total else 0
+    aggregate = _aggregate_audits(audit_items)
+    recent_events = _recent_operational_events(event_items)
 
-    by_environment: dict[str, int] = {}
-    by_status: dict[str, int] = {}
-    for item in items:
-        env = item.get("environment", "unknown")
-        by_environment[env] = by_environment.get(env, 0) + 1
-        st = item.get("status", "unknown")
-        by_status[st] = by_status.get(st, 0) + 1
-
-    _store_event("summary_generated", "/summary", "GET", f"Summary generated over {total} audit records")
+    _store_event(
+        "summary_generated",
+        "/summary",
+        "GET",
+        f"Summary generated over {aggregate['total_services_audited']} audit records",
+    )
 
     return _response(
         200,
         {
-            "total_services_audited": total,
-            "average_score": avg_score,
-            "by_environment": by_environment,
-            "by_status": by_status,
+            **aggregate,
+            "recent_operational_events": recent_events,
             "generated_at": int(time.time()),
         },
     )
+
+
+def _handle_post_summarize(event: dict) -> dict:  # noqa: ARG001
+    if not ENABLE_BEDROCK_SUMMARY:
+        _store_event(
+            "summary_disabled",
+            "/summarize",
+            "POST",
+            "AI summary requested but Bedrock is disabled for this deployment",
+        )
+        return _response(
+            501,
+            {
+                "error": "bedrock_disabled",
+                "message": "AI summary is disabled for this deployment",
+            },
+        )
+
+    try:
+        result = summarize_platform_posture()
+        _store_event(
+            "ai_summary_generated",
+            "/summarize",
+            "POST",
+            f"AI summary generated using model {result['model_id']}",
+        )
+        return _response(200, result)
+    except Exception:  # noqa: BLE001
+        _store_event(
+            "ai_summary_failed",
+            "/summarize",
+            "POST",
+            "Bedrock invocation failed while generating platform summary",
+        )
+        return _response(
+            500,
+            {
+                "error": "ai_summary_failed",
+                "message": "failed to generate platform summary",
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -246,10 +426,13 @@ def handler(event: dict, context: object) -> dict:  # noqa: ARG001
         if method == "GET" and path == "/summary":
             return _handle_get_summary(event)
 
+        if method == "POST" and path == "/summarize":
+            return _handle_post_summarize(event)
+
         msg = f"Unsupported route: {method} {path}"
         _store_event("unsupported_route", path or "/", method or "UNKNOWN", msg)
         return _response(405, {"error": msg})
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         _store_event("unexpected_error", path or "/", method or "UNKNOWN", "Unexpected internal error")
         return _response(500, {"error": "Internal server error"})
