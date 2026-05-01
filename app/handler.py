@@ -263,11 +263,12 @@ def invoke_bedrock_model(prompt: str, model_id: str) -> str:
         return payload["output"]["message"]["content"][0]["text"]
     except (KeyError, IndexError, TypeError):
         # Fallback for other model families (Anthropic, etc.)
-        if "completion" in payload:
-            return str(payload["completion"])
-        if "outputText" in payload:
-            return str(payload["outputText"])
-        return json.dumps(payload)
+        if isinstance(payload.get("completion"), str):
+            return payload["completion"]
+        if isinstance(payload.get("outputText"), str):
+            return payload["outputText"]
+        # Unknown shape — never leak the raw payload to API callers.
+        raise ValueError("Unsupported Bedrock model response shape")
 
 
 def summarize_platform_posture() -> dict:

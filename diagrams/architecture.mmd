@@ -1,12 +1,15 @@
 flowchart TD
-    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary"| APIGW["REST API Gateway"]
+    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
     APIGW -->|"Lambda Proxy Integration"| Lambda["AWS Lambda\n(Python 3.12)"]
     Lambda -->|"PutItem"| AuditDB["DynamoDB\nAudit Records"]
     Lambda -->|"PutItem"| EventsDB["DynamoDB\nOperational Events"]
     Lambda -->|"Scan"| AuditDB
-    Lambda -->|"Service Metrics\n(Invocations, Errors,\nDuration, Throttles)"| CWAlarm["CloudWatch Alarm\nErrors >= 1"]
+    Lambda -->|"Scan"| EventsDB
+    Lambda -. "InvokeModel\n(only when ENABLE_BEDROCK_SUMMARY=true)" .-> Bedrock["Amazon Bedrock\n(optional, disabled by default)"]
+    Lambda -->|"Service Metrics\n(Invocations, Errors,\nDuration, Throttles)"| CWMetrics["CloudWatch Metrics"]
+    CWMetrics --> CWAlarm["CloudWatch Alarm\nErrors >= 1"]
     CWAlarm -->|"Notify"| SNS["SNS Topic"]
-    CWDash["CloudWatch Dashboard"] -->|"Visualize"| Lambda
-    GHA["GitHub Actions\nCI/CD"] -->|"fmt / validate / test / plan / apply"| TF["Terraform"]
-    TF -->|"Provision"| AWS["AWS Resources\n(Lambda, DynamoDB, API GW,\nSNS, CloudWatch)"]
+    CWDash["CloudWatch Dashboard"] -->|"Visualize"| CWMetrics
+    GHA["GitHub Actions\nCI/CD"] -->|"fmt / validate / test / plan / apply"| TF["Terraform\n(modules: data, iam, lambda, api, observability)"]
+    TF -->|"Provision"| AWS["AWS Resources"]
     Copilot["GitHub Copilot Chat\n/ Cloud Agent"] -->|"AI-native implementation"| Repo["Repository\n(code + infra + docs)"]

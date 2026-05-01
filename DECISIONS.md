@@ -1,105 +1,101 @@
-# Architecture Decision Records — Platform Ops Auditor
+# Architectural Decisions
 
----
+## 1. Why Lambda + REST API Gateway + DynamoDB was chosen over ECS / RDS / Kubernetes
 
-## 1. Why Lambda + REST API Gateway + DynamoDB
+The project is an MVP for an internal developer platform automation service. Traffic is low and bursty: developers submit audits ad-hoc, and the platform team queries summaries on demand. This shape is exactly what serverless was designed for.
 
-**Lambda** was chosen because the service is event-driven and stateless. Each API call is a discrete invocation — no persistent process is needed, and Lambda scales to zero when idle. This eliminates the operational overhead of ECS task definitions, container image builds, cluster management, and load balancer configuration.
+- **Lambda** — scale-to-zero, no idle cost, sub-second cold starts at this code size, no infrastructure to maintain.
+- **REST API Gateway** — managed HTTPS endpoint with built-in throttling and Lambda proxy integration. No load balancer, no VPC, no certificate management.
+- **DynamoDB** — fully managed, PAY_PER_REQUEST billing means zero idle cost, server-side encryption and point-in-time recovery available out of the box. The data model is document-shaped (audit records and operational events) — DynamoDB suits it without requiring a schema or joins.
 
-**REST API Gateway** was chosen because it provides a managed entry point with zero infrastructure to maintain. It handles TLS termination, throttling, and routing. The Lambda proxy integration keeps the handler code in full control of the HTTP response shape.
+ECS would mean managing task definitions, an ALB, autoscaling rules, and idle compute cost. EC2 would compound that with patching. Kubernetes would add a control plane, RBAC, network policies, and a much larger blast radius for an MVP. RDS would require a VPC, security groups, parameter groups, multi-AZ tradeoffs, and a relational schema that doesn't earn its complexity for a pair of denormalised tables.
 
-**DynamoDB** was chosen because:
-- The data model is document-oriented (audit records, operational events)
-- There is no need for joins, transactions, or SQL
-- PAY_PER_REQUEST billing means zero cost when idle
-- DynamoDB is fully managed — no RDS maintenance, no schema migrations, no connection pooling
+For a real production platform handling thousands of services with complex querying needs, ECS + RDS would be defensible. For this demo, they would be overbuilding.
 
-**ECS, EC2, Kubernetes, and RDS were explicitly rejected** because they introduce disproportionate operational surface area for a service with two API endpoints and simple storage requirements.
+## 2. Why Option 4 (Operational Intelligence) was chosen as the official additional challenge
 
----
+The project is, by definition, a platform automation service. Operational intelligence — aggregating signals across many services into actionable summaries — is **the** value proposition of an internal platform. Choosing Option 4 lets the additional challenge reinforce, rather than dilute, the project's core purpose.
 
-## 2. Why Option 4: Operational Intelligence Was Chosen
+`GET /summary` aggregates audit records (totals, averages, environment/status breakdowns, top findings) and reads recent operational events. That is platform engineering work in miniature: take many low-level signals and produce a single high-level posture view.
 
-Option 4 (Operational Intelligence) was selected because it complements the core audit record API naturally. The `GET /summary` endpoint aggregates existing audit records and returns:
+## 3. Why the scope is intentionally small and demoable
 
-- Total services audited
-- Average operational score
-- Breakdown by environment
-- Breakdown by status
+A coding challenge is judged on whether the candidate can ship a working, defensible, hardened system end-to-end — not on lines of code. Every additional feature (user auth, multi-region, custom domains, blue/green deploys) would multiply the surface area for review without materially improving what's being demonstrated.
 
-This satisfies the challenge requirement to *aggregate and present platform operational data* without requiring additional infrastructure. The same DynamoDB table that stores audit records becomes the operational intelligence store.
+The MVP fits in a single PR, deploys with one `terraform apply`, demos in five `curl` commands, and is fully covered by 30 Python unit tests + 9 Terraform tests. That is the right scope for a 2–4 hour interview deliverable.
 
-The structured operational events table (validation failures, successful creations, summary generations, unsupported routes) further demonstrates operational awareness — any operational anomaly is captured and queryable.
+## 4. How strict no-wildcard IAM shaped the observability design
 
----
+Strict no-wildcard IAM forbids `Action: "*"`, `Resource: "*"`, ARN wildcards, and any policy fragment using `arn:aws:logs:*:*:log-group:/aws/lambda/*:*`. CloudWatch Logs requires wildcard log-stream ARNs (you can't predict log stream names at deploy time), so the Lambda execution role does **not** include any `logs:*` permissions.
 
-## 3. Why the Scope Is Intentionally Small and Demoable
+That decision cascaded into observability:
 
-A Senior Platform Engineer interview challenge is best served by a project that is:
+- Lambda **service** metrics (Invocations, Errors, Duration, Throttles) are emitted by the Lambda service itself — no IAM needed
+- A CloudWatch alarm on `Errors >= 1` notifies an SNS topic
+- A CloudWatch dashboard visualises all four service metrics
+- Operational events that *would* normally go to logs (validation failures, unsupported routes, unexpected errors, summary generation) are written as structured items to a dedicated DynamoDB table with exact-ARN `PutItem`
 
-- **Deployable in under 5 minutes** (`terraform apply`)
-- **Demonstrable in a 15-minute walkthrough** (two curl commands, a CloudWatch dashboard, a DynamoDB table view)
-- **Clearly understandable** to a reviewer who reads the code for the first time
+The result: full operational awareness without a single wildcard IAM grant.
 
-Complexity is a liability in this context. Over-engineering (adding Cognito auth, VPCs, multiple Lambda functions, event streaming) would obscure the core competencies being evaluated: infrastructure-as-code quality, IAM hygiene, observability design, and API design.
+## 5. Why operational events are stored in DynamoDB instead of CloudWatch Logs
 
-The single Lambda function, two DynamoDB tables, and two API endpoints are sufficient to demonstrate all required competencies.
+CloudWatch Logs would require either:
+- The AWS managed `AWSLambdaBasicExecutionRole` (which uses `arn:aws:logs:*:*:*` wildcards), or
+- A custom policy with `logs:CreateLogStream` and `logs:PutLogEvents` on `arn:aws:logs:{region}:{account}:log-group:/aws/lambda/{fn}:*` (still a log-stream wildcard)
 
----
+Neither is acceptable under strict no-wildcard IAM. DynamoDB sidesteps the problem entirely:
 
-## 4. How Strict No-Wildcard IAM Shaped the Observability Design
+- `dynamodb:PutItem` is granted on **one exact table ARN**
+- Events are durable, queryable, and structured (vs unstructured log lines)
+- The same table powers `GET /summary`'s `recent_operational_events` field — observability data becomes platform intelligence
+- DynamoDB has built-in TTL if retention becomes a concern
 
-The requirement to avoid all IAM wildcards (`Action: *`, `Resource: *`, ARN wildcards) had a direct impact on the observability design.
+The tradeoff: no real-time tail experience like `aws logs tail`. For a platform automation service this is acceptable; live debugging is rare and `Scan` over a small events table is fast.
 
-**The problem with CloudWatch Logs:** Lambda automatically publishes logs to CloudWatch Logs. To allow Lambda to write logs, the standard permission is:
+## 6. What Option 1 practices were borrowed and why RDS / full KMS complexity was avoided
 
-```json
-{
-  "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-  "Resource": "arn:aws:logs:*:*:log-group:/aws/lambda/*:*"
-}
-```
+Option 1 practices borrowed:
+- **Terraform modules** — `modules/{data,iam,lambda,api,observability}` with clean inputs and outputs
+- **Terraform tests** — `terraform test` with mock providers, asserting the design's hard constraints
+- **DynamoDB encryption at rest + PITR** — both tables
+- **API Gateway HTTPS + AWS SDK HTTPS** — encryption in transit
+- **CloudWatch dashboard** — visualised metrics
+- **Managed scaling** — Lambda concurrency + DynamoDB on-demand
 
-This uses a wildcard ARN (`/aws/lambda/*:*`) which violates the no-wildcard requirement.
+What was not borrowed:
+- **RDS** — there is no relational data; adding RDS just to claim Option 1 would be infrastructure theatre
+- **Customer-managed KMS keys** — clean no-wildcard CMK policies are non-trivial. KMS key policies typically need either `kms:*` for the root account or carefully constructed condition keys. Implementing CMKs *and* maintaining strict no-wildcard hygiene is real work that doesn't fit MVP scope. Documented as a future improvement.
+- **Manual autoscaling configuration** — Lambda and DynamoDB on-demand handle scaling automatically; explicit autoscaling policies would be redundant complexity
 
-**The alternative:** Instead of granting log-stream permissions, structured operational events are written to DynamoDB using an exact-ARN policy:
+The project explicitly does **not** claim full Option 1 completion. It borrows the practices that genuinely improve the project for an MVP.
 
-```hcl
-statement {
-  actions   = ["dynamodb:PutItem"]
-  resources = [aws_dynamodb_table.events.arn]
-}
-```
+## 7. What Option 2 practices were borrowed and why Bedrock is optional
 
-This is arguably a better design anyway: operational events are queryable, structured, and persistent — unlike CloudWatch Logs which requires log parsing and has shorter retention by default.
+Option 2 practices borrowed:
+- **Staged AI workflow** — generate MVP → harden security → strengthen operational intelligence → add optional AI maturity → final review
+- **AI review checklist** — explicit gates against wildcard IAM, missing tests, missing observability
+- **Copilot review notes** — documented what Copilot generated, where it was course-corrected, and known tradeoffs
+- **Optional Bedrock-powered `POST /summarize`** — an AI summary of platform posture
 
-Lambda service metrics (Invocations, Errors, Duration, Throttles) are available in the `AWS/Lambda` CloudWatch namespace **without any IAM permissions** — they are emitted by the Lambda service automatically. These are used for the CloudWatch alarm and dashboard.
+Bedrock is optional and disabled by default for four reasons:
 
----
+1. **Account variance** — Bedrock model access is gated per-account. A reviewer cloning this repo into an arbitrary AWS account cannot guarantee `amazon.nova-lite-v1:0` is enabled.
+2. **Cost** — Even small Bedrock calls are billable. The MVP must demo for free.
+3. **API contract stability** — The `/summarize` route is always created in API Gateway; only the IAM grant and the Lambda's behavior change. This keeps deployment idempotent regardless of feature flag state.
+4. **Strict IAM** — Granting `bedrock:InvokeModel` only when needed keeps the steady-state IAM policy minimal. When enabled, the grant is scoped to **one** exact model ARN — never `bedrock:*`, never `Resource: *`.
 
-## 5. Why Operational Events Are Stored in DynamoDB
+The project explicitly does **not** claim full Option 2 completion unless Bedrock is enabled and demonstrated.
 
-Three reasons:
+## 8. What would be improved with more time
 
-1. **IAM hygiene:** As described above, granting `logs:CreateLogStream` on wildcard log-stream ARNs violates the no-wildcard requirement. DynamoDB PutItem on an exact table ARN does not.
-
-2. **Queryability:** Operational events in DynamoDB are structured JSON documents. A platform team can query for all `validation_failure` events, all events for a specific service, or all `unexpected_error` events. CloudWatch Logs requires a Logs Insights query with log format parsing.
-
-3. **Durability:** DynamoDB has PITR enabled. Operational events survive Lambda function deletion, log group expiration, and account region changes.
-
-The trade-off is DynamoDB cost for write-heavy event streams. For this MVP scale (dozens to hundreds of events per day), PAY_PER_REQUEST DynamoDB is effectively free. For high-throughput production use, a dedicated logging solution (CloudWatch Logs with exact-ARN permissions, or OpenSearch) would be more appropriate.
-
----
-
-## 6. What Would Be Improved With More Time
-
-| Area | Current | Improved |
-|---|---|---|
-| DynamoDB queries | Table scan on `GET /summary` | GSI on `environment` and `status` for O(1) queries |
-| Summary pagination | No pagination | Cursor-based pagination for large datasets |
-| CloudWatch Logs | Not enabled (IAM constraint) | Exact-ARN log group permissions after IAM review |
-| SNS subscriptions | Topic created, no subscribers | Email/PagerDuty subscription via Terraform variable |
-| Service score trends | Point-in-time score only | Score history with `created_at` GSI for trend analysis |
-| Auth | None (intentional for MVP) | API key or IAM auth for write endpoints |
-| Error detail | Generic 500 messages | Structured error codes without leaking internals |
-| Terraform state | Local state | Remote state in S3 with DynamoDB lock |
+- **GSI on `environment` and `status`** — replace `Scan` in `GET /summary` with targeted `Query` calls for higher scale
+- **Pagination** — return audit records in pages with cursor-based iteration
+- **Customer-managed KMS keys** — for both DynamoDB tables and SNS topic, with a tightly scoped key policy
+- **API key or IAM authorizer** — for write endpoints (`POST /audit`, `POST /summarize`)
+- **WAF in front of API Gateway** — basic rate limiting and geo blocks
+- **`tflint` and `checkov` in CI** — additional Terraform quality gates beyond `validate` + `test`
+- **Container image packaging** — replace `archive_file` zip with ECR-backed Lambda for richer dependency support
+- **OpenTelemetry traces** — written to DynamoDB or X-Ray for distributed tracing without log-stream IAM
+- **AI-assisted CI** — Copilot reviewer that flags wildcards and missing tests before human review
+- **Multi-region deployment** — DynamoDB Global Tables + per-region API Gateway + Route 53 latency routing
+- **SNS subscriptions via Terraform variable** — let the deployer specify email/PagerDuty/Slack endpoints declaratively

@@ -13,7 +13,7 @@ GitHub Copilot Chat / Copilot cloud agent is the **AI-native development workflo
 ## Guiding Principles
 
 - **Prioritize clean code** — readable, minimal, well-structured.
-- **Terraform quality** — use modules only when clearly beneficial; prefer flat, readable configs.
+- **Terraform quality** — modular Terraform under `terraform/modules/{data,iam,lambda,api,observability}`; keep modules small and focused.
 - **Least privilege** — every IAM action and resource must be scoped as tightly as possible.
 - **Strict no-wildcard IAM** — no `Action: "*"`, no `Resource: "*"`, no ARN wildcards anywhere.
 - **CI/CD** — GitHub Actions must lint, validate, test, and optionally apply Terraform.
@@ -42,7 +42,7 @@ GitHub Copilot Chat / Copilot cloud agent is the **AI-native development workflo
 - ECS, EC2, Kubernetes
 - RDS or any relational database
 - React or any frontend framework
-- AWS Bedrock or any AI/ML service
+- AWS Bedrock or any AI/ML service **for the base demo path** — Bedrock is allowed only behind the `enable_bedrock_summary` feature flag (default `false`) and only with `bedrock:InvokeModel` scoped to one exact model ARN
 - Complex authentication (no Cognito, no OAuth)
 - External paid services
 - Unnecessary abstractions or frameworks
@@ -87,7 +87,7 @@ Choose the **simplest implementation** that satisfies the challenge requirements
 Prefer:
 - One Lambda function over multiple
 - One DynamoDB table scan over a complex GSI query
-- One flat Terraform file over multiple modules
+- Small focused Terraform modules over a single sprawling root file
 - Clear variable names over clever abstractions
 
 ---
@@ -111,8 +111,19 @@ terraform/
   variables.tf
   main.tf
   outputs.tf
+  modules/
+    data/
+    iam/
+    lambda/
+    api/
+    observability/
   tests/
     platform_ops_auditor.tftest.hcl
+
+docs/
+  AI_WORKFLOW.md
+  AI_REVIEW_CHECKLIST.md
+  COPILOT_REVIEW_NOTES.md
 
 diagrams/
   architecture.mmd
@@ -121,3 +132,14 @@ README.md
 DECISIONS.md
 .gitignore
 ```
+
+---
+
+## Optional Bedrock Enhancement
+
+`POST /summarize` is an optional, **disabled-by-default** endpoint that uses Amazon Bedrock to generate an AI-written platform posture summary. When `enable_bedrock_summary = true`:
+- Lambda receives `bedrock:InvokeModel` scoped to **one exact model ARN** (never `bedrock:*`, never `Resource: *`)
+- The route always exists in API Gateway; only the IAM grant and Lambda behavior change
+- When disabled, the endpoint returns HTTP 501 with a stable error code
+
+Bedrock-related changes must preserve all no-wildcard IAM rules.

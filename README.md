@@ -2,31 +2,31 @@
 
 > A minimal, clean, demoable **internal developer platform automation service** built for a Senior Platform Engineer coding challenge.
 
-[![Terraform CI/CD](https://github.com/lumen-maximus/ngx-interview/actions/workflows/terraform.yml/badge.svg)](https://github.com/lumen-maximus/ngx-interview/actions/workflows/terraform.yml)
+[![CI/CD](https://github.com/lumen-maximus/ngx-interview/actions/workflows/terraform.yml/badge.svg)](https://github.com/lumen-maximus/ngx-interview/actions/workflows/terraform.yml)
 
 ---
 
 ## Project Summary
 
-**Platform Ops Auditor** lets developers submit service audit metadata through a REST API. The service validates input, calculates a lightweight operational health score, stores audit records in DynamoDB, and exposes a summary endpoint that aggregates platform operational intelligence.
+**Platform Ops Auditor** lets developers submit service audit metadata through a REST API. The service validates input, calculates a lightweight operational health score, stores audit records and structured operational events in DynamoDB, and exposes a summary endpoint that aggregates platform operational intelligence.
 
 This project is:
-- **Packaged for AWS Lambda** (Python 3.12, handler.handler)
+- **Packaged for AWS Lambda** (Python 3.12, `handler.handler`)
 - **Exposed through REST API Gateway** (Lambda proxy integration)
-- **Storing critical data in DynamoDB** (audit records + structured operational events)
-- **Observable through CloudWatch** metrics, alarm, SNS notification, and dashboard
-- **Deployed and managed by Terraform** with a GitHub Actions CI/CD pipeline
+- **Recording important data in DynamoDB** (audit records + structured operational events)
+- **Demonstrating operational awareness** through CloudWatch metrics, a CloudWatch alarm, an SNS topic, a CloudWatch dashboard, and DynamoDB operational event records
+- **Accessible after deployment through Terraform outputs**
 - **Built with strict no-wildcard IAM** — no `Action: *`, no `Resource: *`, no ARN wildcards
 
-No application secrets are required for this MVP. AWS credentials are referenced only through GitHub Actions secrets (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). The Lambda function itself requires no secrets — it uses its IAM role to access DynamoDB.
+No application secrets are required for this MVP. AWS credentials are referenced only through GitHub Actions secrets (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). The Lambda function itself requires no secrets — it uses its IAM role to access DynamoDB and (optionally) Bedrock.
 
 ---
 
-## Why This Is an Internal Developer Platform Automation Service
+## What Problem This Solves
 
-Internal developer platforms (IDPs) give platform teams visibility into the services that run on their platform. Platform Ops Auditor solves a real IDP problem: **how do you collect and aggregate service health metadata from many teams?**
+Internal developer platforms (IDPs) need visibility into the services that run on them. Platform Ops Auditor solves a real IDP problem: **how do you collect and aggregate service health metadata from many teams, without standing up heavy infrastructure?**
 
-Teams `POST` audit records for their services. The platform team queries `GET /summary` to see overall platform health, environment breakdown, and status distribution — all from a single lightweight API backed by serverless infrastructure.
+Teams `POST` audit records for their services. The platform team queries `GET /summary` to see overall platform health, environment breakdown, status distribution, and recent operational signals — all from a single lightweight API backed by serverless infrastructure.
 
 ---
 
@@ -34,22 +34,48 @@ Teams `POST` audit records for their services. The platform team queries `GET /s
 
 ### Core Challenge Checklist
 
-- [x] **AI-native development workflow** — GitHub Copilot Chat / Copilot cloud agent used throughout; documented below
-- [x] **Terraform and CI/CD** — Full Terraform configuration with GitHub Actions pipeline (fmt, validate, test, plan, apply)
-- [x] **Automation service** — REST API with POST /audit and GET /summary backed by Lambda + DynamoDB
-- [x] **Documentation** — README.md, DECISIONS.md, copilot-instructions.md, architecture diagram
+- [x] **AI-native development workflow** — GitHub Copilot Chat / Copilot cloud agent used throughout; documented in `docs/AI_WORKFLOW.md`
+- [x] **Terraform and CI/CD** — Modular Terraform with GitHub Actions pipeline (Python tests, fmt, validate, test, plan, apply)
+- [x] **Automation service** — REST API with `POST /audit` and `GET /summary` backed by Lambda + DynamoDB
+- [x] **Documentation** — `README.md`, `DECISIONS.md`, `docs/`, architecture diagram, `copilot-instructions.md`
 
-### Additional Challenge: Option 4 — Operational Intelligence
+### Official Additional Challenge: Option 4 — Operational Intelligence
 
-- [x] `GET /summary` aggregates all audit records and returns:
-  - `total_services_audited`
-  - `average_score`
-  - `by_environment` breakdown
-  - `by_status` breakdown
-  - `generated_at` timestamp
-- [x] Structured operational events stored in DynamoDB for every key action
-- [x] CloudWatch dashboard visualizing Lambda Invocations, Errors, Duration, Throttles
-- [x] CloudWatch alarm on Lambda Errors >= 1 with SNS notification
+`GET /summary` aggregates and presents platform operational data:
+
+- `total_services_audited`
+- `average_score`
+- `by_environment` breakdown
+- `by_status` breakdown
+- `top_findings` — most frequently observed audit findings across all services
+- `recent_operational_events` — the most recent structured operational events from the events table
+- `generated_at` timestamp
+
+Every key action also writes a structured operational event to DynamoDB (`audit_created`, `validation_failure`, `summary_generated`, `unsupported_route`, `unexpected_error`, plus AI-summary events when Bedrock is enabled). The CloudWatch dashboard visualises Lambda Invocations, Errors, Duration, and Throttles. The CloudWatch alarm on Lambda `Errors >= 1` notifies SNS.
+
+### Selected Practices Borrowed from Option 1 (More Complex Terraform)
+
+The project does **not** claim full Option 1 completion — it intentionally avoids RDS and excessive infrastructure complexity to stay demoable. Practices borrowed:
+
+- **Terraform modules** — `modules/{data,iam,lambda,api,observability}` with clean inputs/outputs
+- **Terraform tests** — `terraform test` with mock providers, asserting no-wildcard IAM and exact API permissions
+- **DynamoDB encryption at rest** — server-side encryption enabled
+- **DynamoDB point-in-time recovery** — enabled on both tables
+- **API Gateway HTTPS** — encryption in transit
+- **AWS SDK HTTPS calls to DynamoDB** — encryption in transit
+- **CloudWatch dashboard** — visualised Lambda metrics
+- **Managed scaling** — through Lambda concurrency and DynamoDB on-demand capacity
+
+What is **not** included from Option 1 (and why): RDS (no relational data; DynamoDB suits the document model), customer-managed KMS keys (clean no-wildcard key policies are non-trivial; documented as a future improvement), ECS/EC2/Kubernetes (Lambda is the right primitive for this scale).
+
+### Selected Practices Borrowed from Option 2 (Show Off AI Maturity)
+
+The project does **not** claim full Option 2 completion. Practices borrowed:
+
+- **Staged AI workflow** documented in `docs/AI_WORKFLOW.md`
+- **AI review checklist** in `docs/AI_REVIEW_CHECKLIST.md` enforcing no-wildcard IAM, validation, and observability discipline
+- **Copilot review notes** in `docs/COPILOT_REVIEW_NOTES.md` flagging where Copilot was course-corrected
+- **Optional Bedrock-powered `POST /summarize`** — disabled by default; when enabled, granted `bedrock:InvokeModel` on **one exact model ARN**
 
 ---
 
@@ -57,18 +83,23 @@ Teams `POST` audit records for their services. The platform team queries `GET /s
 
 ```mermaid
 flowchart TD
-    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary"| APIGW["REST API Gateway"]
+    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
     APIGW -->|"Lambda Proxy Integration"| Lambda["AWS Lambda\n(Python 3.12)"]
     Lambda -->|"PutItem"| AuditDB["DynamoDB\nAudit Records"]
     Lambda -->|"PutItem"| EventsDB["DynamoDB\nOperational Events"]
     Lambda -->|"Scan"| AuditDB
-    Lambda -->|"Service Metrics\n(Invocations, Errors,\nDuration, Throttles)"| CWAlarm["CloudWatch Alarm\nErrors >= 1"]
+    Lambda -->|"Scan"| EventsDB
+    Lambda -. "InvokeModel\n(only when ENABLE_BEDROCK_SUMMARY=true)" .-> Bedrock["Amazon Bedrock\n(optional, disabled by default)"]
+    Lambda -->|"Service Metrics"| CWMetrics["CloudWatch Metrics"]
+    CWMetrics --> CWAlarm["CloudWatch Alarm\nErrors >= 1"]
     CWAlarm -->|"Notify"| SNS["SNS Topic"]
-    CWDash["CloudWatch Dashboard"] -->|"Visualize"| Lambda
-    GHA["GitHub Actions\nCI/CD"] -->|"fmt / validate / test / plan / apply"| TF["Terraform"]
-    TF -->|"Provision"| AWS["AWS Resources\n(Lambda, DynamoDB, API GW,\nSNS, CloudWatch)"]
-    Copilot["GitHub Copilot Chat\n/ Cloud Agent"] -->|"AI-native implementation"| Repo["Repository\n(code + infra + docs)"]
+    CWDash["CloudWatch Dashboard"] -->|"Visualize"| CWMetrics
+    GHA["GitHub Actions"] -->|"fmt / validate / test / plan / apply"| TF["Terraform\n(modular)"]
+    TF -->|"Provision"| AWS["AWS Resources"]
+    Copilot["GitHub Copilot"] -->|"AI-native implementation"| Repo["Repository"]
 ```
+
+See [`diagrams/architecture.mmd`](diagrams/architecture.mmd) for the source.
 
 ---
 
@@ -76,9 +107,9 @@ flowchart TD
 
 ### POST /audit
 
-**Purpose:** Create a service audit record.
+Create a service audit record.
 
-**Request body:**
+**Request body**:
 ```json
 {
   "service_name": "payments-api",
@@ -89,14 +120,14 @@ flowchart TD
 }
 ```
 
-**Validation:**
-- `service_name` — required, string, 3–100 characters
+**Validation**:
+- `service_name` — required string, 3–100 chars
 - `environment` — required, one of `dev`, `staging`, `prod`
 - `status` — required, one of `healthy`, `degraded`, `unhealthy`
-- `repository` — optional, string if provided
-- `owner` — optional, string if provided
+- `repository` — optional string
+- `owner` — optional string
 
-**Successful response (HTTP 201):**
+**Successful response (HTTP 201)**:
 ```json
 {
   "audit_id": "uuid",
@@ -115,50 +146,70 @@ flowchart TD
 }
 ```
 
-**Scoring:**
-| Condition | Points |
-|---|---|
-| Base score | 70 |
-| valid `service_name` | +5 |
-| valid `environment` | +5 |
-| valid `status` | +5 |
-| `repository` provided | +5 |
-| `owner` provided | +5 |
-| **Maximum** | **95** |
-
----
+**Scoring**: base 70, +5 for each of `service_name`, `environment`, `status`, `repository`, `owner` → maximum 95.
 
 ### GET /summary
 
-**Purpose:** Aggregate and present operational intelligence from all audit records.
+Aggregate operational intelligence from all audit records and recent operational events.
 
-**Successful response (HTTP 200):**
+**Successful response (HTTP 200)**:
 ```json
 {
   "total_services_audited": 12,
   "average_score": 84,
-  "by_environment": {
-    "dev": 5,
-    "staging": 3,
-    "prod": 4
-  },
-  "by_status": {
-    "healthy": 8,
-    "degraded": 3,
-    "unhealthy": 1
-  },
+  "by_environment": { "dev": 5, "staging": 3, "prod": 4 },
+  "by_status": { "healthy": 8, "degraded": 3, "unhealthy": 1 },
+  "top_findings": [
+    "service owner missing",
+    "repository metadata missing"
+  ],
+  "recent_operational_events": [
+    {
+      "event_type": "audit_created",
+      "route": "/audit",
+      "method": "POST",
+      "created_at": 1714495680
+    }
+  ],
   "generated_at": 1714495680
 }
 ```
+
+### POST /summarize (optional, disabled by default)
+
+Generate an AI-written platform operational posture summary using Amazon Bedrock.
+
+**When `ENABLE_BEDROCK_SUMMARY` is `false` (default)** — HTTP 501:
+```json
+{
+  "error": "bedrock_disabled",
+  "message": "AI summary is disabled for this deployment"
+}
+```
+
+**When `ENABLE_BEDROCK_SUMMARY` is `true`** — HTTP 200:
+```json
+{
+  "summary_id": "uuid",
+  "summary": "Platform posture is healthy across 12 services...",
+  "model_id": "amazon.nova-lite-v1:0",
+  "generated_at": 1714495680
+}
+```
+
+**On Bedrock failure** — HTTP 500 with a generic message; full failure detail is recorded in the operational events table.
 
 ---
 
 ## Demo Commands
 
-### Submit a healthy audit record
 ```bash
 BASE_URL=$(terraform -chdir=terraform output -raw api_base_url)
+```
 
+### Submit a healthy audit record
+
+```bash
 curl -s -X POST "${BASE_URL}/audit" \
   -H "Content-Type: application/json" \
   -d '{
@@ -171,15 +222,23 @@ curl -s -X POST "${BASE_URL}/audit" \
 ```
 
 ### Get platform operational summary
+
 ```bash
 curl -s "${BASE_URL}/summary" | jq .
 ```
 
 ### Trigger a validation failure (HTTP 400)
+
 ```bash
 curl -s -X POST "${BASE_URL}/audit" \
   -H "Content-Type: application/json" \
   -d '{"service_name": "x", "environment": "unknown", "status": "ok"}' | jq .
+```
+
+### Call the optional summarize endpoint (returns 501 by default)
+
+```bash
+curl -s -X POST "${BASE_URL}/summarize" | jq .
 ```
 
 ---
@@ -188,10 +247,11 @@ curl -s -X POST "${BASE_URL}/audit" \
 
 ### Prerequisites
 - Terraform >= 1.6
-- AWS CLI configured or GitHub secrets set
-- AWS account with permissions to create Lambda, DynamoDB, API Gateway, CloudWatch, SNS, IAM
+- AWS CLI configured (or GitHub secrets set for CI deployment)
+- AWS account with permissions to create Lambda, DynamoDB, API Gateway, CloudWatch, SNS, IAM (and Bedrock if enabling `POST /summarize`)
 
 ### Local deployment
+
 ```bash
 cd terraform
 terraform init
@@ -202,34 +262,60 @@ terraform apply
 ```
 
 ### Via GitHub Actions
+
 1. Set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets
 2. Optionally set `AWS_REGION` as a repository variable (default: `us-east-1`)
 3. Trigger `workflow_dispatch` with `apply: true` to deploy
-4. Pull requests automatically run `fmt`, `init`, `validate`, `test`, `plan`
+4. Pull requests automatically run Python tests, then `fmt`, `init`, `validate`, `test`, `plan`
 
-### Post-deployment
+### Outputs
+
 ```bash
-terraform output api_base_url     # base URL for API calls
-terraform output audit_endpoint   # POST /audit URL
-terraform output summary_endpoint # GET /summary URL
-terraform output dashboard_name   # CloudWatch dashboard name
+terraform output api_base_url       # base URL for API calls
+terraform output audit_endpoint     # POST /audit URL
+terraform output summary_endpoint   # GET /summary URL
+terraform output summarize_endpoint # POST /summarize URL (501 if Bedrock disabled)
+terraform output dashboard_name     # CloudWatch dashboard name
 ```
 
 ---
 
 ## GitHub Actions CI/CD
 
-The workflow (`.github/workflows/terraform.yml`) runs on:
-- **Pull requests** when `terraform/`, `app/`, or the workflow file changes
-- **Manual dispatch** with optional `apply: true` to deploy
+Two jobs run on every PR (and on `workflow_dispatch`):
 
-Pipeline steps:
-1. `terraform fmt -check -recursive` — enforces formatting
-2. `terraform init`
-3. `terraform validate` — checks HCL syntax and provider schema
-4. `terraform test` — runs `terraform/tests/platform_ops_auditor.tftest.hcl`
-5. `terraform plan -out=tfplan` — generates plan
-6. `terraform apply` — only when `apply: true` is passed to `workflow_dispatch`
+1. **`python-tests`** — installs `pytest` + `boto3`, runs `pytest app/`
+2. **`terraform`** — runs `fmt -check -recursive` → `init` → `validate` → `test` → `plan -out=tfplan` → uploads plan artifact → `apply` (only when `workflow_dispatch.inputs.apply == 'true'`)
+
+The workflow has explicit `permissions: contents: read` (least privilege for the GitHub token).
+
+---
+
+## Terraform Modules
+
+`terraform/main.tf` wires together five small, focused modules:
+
+| Module | Purpose |
+|---|---|
+| `modules/data` | DynamoDB audit + events tables (PAY_PER_REQUEST, SSE, PITR) |
+| `modules/iam` | Lambda execution role + exact-ARN policy (DynamoDB + optional Bedrock) |
+| `modules/lambda` | `archive_file` zip + `aws_lambda_function` (python3.12, ≤10s timeout) |
+| `modules/api` | REST API, three resources (`/audit`, `/summary`, `/summarize`), exact-ARN Lambda permissions |
+| `modules/observability` | SNS topic, CloudWatch alarm (Errors ≥ 1), CloudWatch dashboard |
+
+Each module exposes only the outputs the root needs. The root computes a single `name_prefix` and a `tags` map and passes them to every module.
+
+## Terraform Tests
+
+`terraform/tests/platform_ops_auditor.tftest.hcl` runs under mocked AWS and `archive` providers (no real cloud resources created). 9 assertions cover:
+
+- Both DynamoDB tables created with names exposed
+- IAM policy actions and resources contain no `*`
+- Bedrock permission absent when disabled
+- Bedrock permission present and scoped to the exact configured model ARN when enabled
+- All three API endpoints exposed
+- API Gateway → Lambda permission source ARNs scoped to exact `{stage}/{method}/{path}` patterns
+- SNS topic, CloudWatch dashboard, and CloudWatch alarm all created
 
 ---
 
@@ -237,70 +323,91 @@ Pipeline steps:
 
 | Signal | Implementation |
 |---|---|
-| Lambda Invocations | CloudWatch metric (AWS/Lambda namespace) |
-| Lambda Errors | CloudWatch metric + alarm at >= 1 |
+| Lambda Invocations | CloudWatch metric (`AWS/Lambda` namespace) |
+| Lambda Errors | CloudWatch metric + alarm at `>= 1` |
 | Lambda Duration | CloudWatch metric on dashboard |
 | Lambda Throttles | CloudWatch metric on dashboard |
 | Alarm notification | SNS topic |
-| Dashboard | CloudWatch dashboard: Invocations, Errors, Duration, Throttles |
-| Operational events | DynamoDB (audit_created, validation_failure, summary_generated, unsupported_route, unexpected_error) |
+| Dashboard | CloudWatch dashboard with all four Lambda metrics |
+| Operational events | DynamoDB events table: `audit_created`, `validation_failure`, `summary_generated`, `summary_disabled`, `ai_summary_generated`, `ai_summary_failed`, `unsupported_route`, `unexpected_error` |
 
 ### Why operational events are stored in DynamoDB
 
-Strict no-wildcard IAM means Lambda cannot be granted `logs:CreateLogStream` on `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` (wildcard stream ARN). Rather than grant this permission, structured operational events are written to a dedicated DynamoDB table with exact-ARN `dynamodb:PutItem`. This preserves full observability without compromising IAM hygiene.
+Strict no-wildcard IAM means Lambda cannot be granted `logs:CreateLogStream` on `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` (wildcard log-stream ARN). Rather than grant this permission, structured operational events are written to a dedicated DynamoDB table with exact-ARN `dynamodb:PutItem`. This preserves full observability without compromising IAM hygiene — and operational events are queryable, structured, and durable.
 
 ---
 
 ## No-Wildcard IAM
 
-Every IAM statement uses exact ARNs:
+Every IAM statement uses exact ARNs. The Lambda policy allows only:
 
 ```hcl
-# Lambda policy — no wildcards
+# Lambda policy — no wildcards anywhere
 statement {
   actions   = ["dynamodb:PutItem"]
-  resources = [aws_dynamodb_table.audit.arn, aws_dynamodb_table.events.arn]
+  resources = [audit_table_arn, events_table_arn]
 }
 
 statement {
   actions   = ["dynamodb:Scan"]
-  resources = [aws_dynamodb_table.audit.arn]
+  resources = [audit_table_arn, events_table_arn]
+}
+
+# Only when enable_bedrock_summary is true
+statement {
+  actions   = ["bedrock:InvokeModel"]
+  resources = [bedrock_model_arn]
 }
 ```
 
-API Gateway Lambda permissions use the exact stage/method/path ARN:
+API Gateway → Lambda permissions use exact source ARNs:
 ```
 arn:aws:execute-api:{region}:{account}:{api-id}/{stage}/POST/audit
 arn:aws:execute-api:{region}:{account}:{api-id}/{stage}/GET/summary
+arn:aws:execute-api:{region}:{account}:{api-id}/{stage}/POST/summarize
 ```
 
-Terraform tests validate that the rendered IAM policy JSON contains no `Action: *`, no `Resource: *`, and no ARN wildcards.
+`terraform test` validates that no resource ARN or action contains `*`.
 
 ---
 
-## AI-Native Workflow — GitHub Copilot
+## Optional Bedrock Enhancement
+
+The base project satisfies the core challenge plus Option 4: Operational Intelligence. As an optional AI maturity enhancement inspired by Option 2, `POST /summarize` can use Amazon Bedrock to generate an AI-written operational posture summary from DynamoDB audit data. **This feature is disabled by default** to keep the MVP deployable in accounts that may not have Bedrock model access configured. When enabled, Lambda receives `bedrock:InvokeModel` permission scoped to one exact model ARN.
+
+To enable:
+```hcl
+# terraform.tfvars
+enable_bedrock_summary = true
+bedrock_model_id       = "amazon.nova-lite-v1:0"
+bedrock_model_arn      = "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+```
+
+A human reviewer must verify that the chosen Bedrock model is enabled in the target AWS account before deploying with `enable_bedrock_summary = true`.
+
+---
+
+## AI Maturity Notes
+
+This project uses GitHub Copilot Chat / Copilot cloud agent as its AI-native workflow. See:
+
+- [`docs/AI_WORKFLOW.md`](docs/AI_WORKFLOW.md) — staged AI workflow, tools used, course corrections
+- [`docs/AI_REVIEW_CHECKLIST.md`](docs/AI_REVIEW_CHECKLIST.md) — checklist used for every Copilot-generated change
+- [`docs/COPILOT_REVIEW_NOTES.md`](docs/COPILOT_REVIEW_NOTES.md) — what Copilot generated, security-sensitive areas, known tradeoffs
 
 ### How Copilot helped
 
-- **Scaffolded the Lambda handler** (`app/handler.py`) — routing, validation, scoring, DynamoDB writes, and operational event storage from the spec
-- **Generated Terraform HCL** for DynamoDB tables, Lambda, API Gateway, IAM, CloudWatch, and SNS
-- **Wrote the unit test suite** (`app/test_handler.py`) with mock patching for DynamoDB
-- **Drafted the Terraform test file** (`terraform/tests/platform_ops_auditor.tftest.hcl`)
-- **Composed README.md and DECISIONS.md** from the architecture decisions
-- **Set up `.github/copilot-instructions.md`** as the agent configuration file
+- Scaffolded the Lambda handler, Terraform configuration, unit tests, and Terraform tests
+- Drafted README, DECISIONS.md, and architecture diagram from the spec
+- Generated the GitHub Actions workflow
 
-### Where Copilot needed course correction
+### Where Copilot was course-corrected
 
-- **IAM wildcards** — Copilot's default Lambda role suggestions used `AWSLambdaBasicExecutionRole` (which grants `logs:*` on `*`). This was replaced with a hand-crafted `aws_iam_policy_document` using exact table ARNs.
-- **Log-stream permissions** — Initial suggestions included `logs:CreateLogStream` on wildcard ARNs. These were replaced with the DynamoDB operational events pattern.
-- **API Gateway Lambda permissions** — Copilot defaulted to `arn:aws:execute-api:*:*:*` as the `source_arn`. This was corrected to exact stage/method/path ARNs.
-- **Archive source directory** — Copilot used `source_file` pointing to `handler.py` only; corrected to `source_dir` pointing to `../app` so all Python files are included.
-
-### How the workflow could be improved
-
-- Add a Copilot-aware linting step (e.g., `checkov` or `tflint`) to automatically flag IAM wildcards before code review
-- Use a `.github/copilot-instructions.md` with stricter IAM validation prompts to catch wildcards in the first generation
-- Pair Copilot generation with a `terraform test` auto-run so violations are caught immediately in the PR pipeline
+- IAM wildcards (managed `AWSLambdaBasicExecutionRole` → exact-ARN policy document)
+- CloudWatch Logs permissions (wildcard log-stream ARNs → DynamoDB operational events)
+- API Gateway permissions (broad `execute-api:*:*:*` → exact stage/method/path ARNs)
+- Bedrock IAM (broad `bedrock:*` → single `bedrock:InvokeModel` on one model ARN)
+- Lambda zip source (single `source_file` → `source_dir` for full module packaging)
 
 ---
 
@@ -308,23 +415,26 @@ Terraform tests validate that the rendered IAM policy JSON contains no `Action: 
 
 - GSI on `environment` and `status` for efficient filtered queries (instead of table scan)
 - Pagination support on `GET /summary` for large datasets
-- SNS email subscription setup in Terraform
-- CloudWatch log group with exact-ARN permissions for structured JSON logging
+- Customer-managed KMS keys for both DynamoDB tables (kept out of MVP because clean no-wildcard key policies require careful design)
+- SNS email/PagerDuty subscription via Terraform variable
 - Service-level trend analysis (score over time)
-- API key or request signing for write endpoints
+- API key or IAM authorizer for write endpoints
+- Add `tflint` / `checkov` to CI for additional Terraform quality gates
+- AI-assisted PR review comments, policy-as-code explanations, AI-generated daily operational summaries
 
 ---
 
 ## Interview Demo Path
 
-1. `terraform init && terraform validate && terraform test` — show CI passes locally
-2. `terraform apply` — deploy to AWS
-3. `curl POST /audit` — create a healthy audit record (score 95)
-4. `curl POST /audit` (validation failure) — show 400 + stored operational event
-5. `curl GET /summary` — show aggregated intelligence
-6. Open CloudWatch dashboard — show Lambda metrics
-7. Show DynamoDB tables — audit records + operational events
-8. Show CloudWatch alarm — wired to SNS
-9. `terraform output` — show all outputs
-10. Walk through `terraform/tests/platform_ops_auditor.tftest.hcl` — explain the no-wildcard IAM assertions
-
+1. `terraform init && terraform validate && terraform test` — show 9 Terraform tests pass
+2. `pytest app/` — show 30 Python tests pass
+3. `terraform apply` — deploy to AWS
+4. `curl POST /audit` — create a healthy audit record (score 95)
+5. `curl POST /audit` (validation failure) — show 400 + stored operational event
+6. `curl GET /summary` — show aggregated intelligence including `top_findings` and `recent_operational_events`
+7. `curl POST /summarize` — show 501 (Bedrock disabled by default)
+8. Open CloudWatch dashboard — show Lambda metrics
+9. Show DynamoDB tables — audit records + operational events
+10. Show CloudWatch alarm wired to SNS
+11. Walk through `terraform/tests/platform_ops_auditor.tftest.hcl` — explain the no-wildcard IAM assertions
+12. Walk through `docs/AI_WORKFLOW.md` and `docs/COPILOT_REVIEW_NOTES.md` — explain how Copilot was used and course-corrected
