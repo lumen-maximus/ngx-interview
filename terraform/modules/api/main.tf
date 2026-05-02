@@ -30,6 +30,49 @@ resource "aws_api_gateway_integration" "post_audit" {
   uri                     = var.lambda_invoke_arn
 }
 
+# CORS preflight for /audit
+resource "aws_api_gateway_method" "options_audit" {
+  authorization = "NONE"
+  http_method   = "OPTIONS"
+  resource_id   = aws_api_gateway_resource.audit.id
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+}
+
+resource "aws_api_gateway_integration" "options_audit" {
+  http_method = aws_api_gateway_method.options_audit.http_method
+  resource_id = aws_api_gateway_resource.audit.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "options_audit" {
+  http_method = aws_api_gateway_method.options_audit.http_method
+  resource_id = aws_api_gateway_resource.audit.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "options_audit" {
+  http_method = aws_api_gateway_method.options_audit.http_method
+  resource_id = aws_api_gateway_resource.audit.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = aws_api_gateway_method_response.options_audit.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+  depends_on = [aws_api_gateway_integration.options_audit]
+}
+
 # ---------------------------------------------------------------------------
 # /summary
 # ---------------------------------------------------------------------------
@@ -54,6 +97,49 @@ resource "aws_api_gateway_integration" "get_summary" {
   rest_api_id             = aws_api_gateway_rest_api.api.id
   type                    = "AWS_PROXY"
   uri                     = var.lambda_invoke_arn
+}
+
+# CORS preflight for /summary
+resource "aws_api_gateway_method" "options_summary" {
+  authorization = "NONE"
+  http_method   = "OPTIONS"
+  resource_id   = aws_api_gateway_resource.summary.id
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+}
+
+resource "aws_api_gateway_integration" "options_summary" {
+  http_method = aws_api_gateway_method.options_summary.http_method
+  resource_id = aws_api_gateway_resource.summary.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "options_summary" {
+  http_method = aws_api_gateway_method.options_summary.http_method
+  resource_id = aws_api_gateway_resource.summary.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "options_summary" {
+  http_method = aws_api_gateway_method.options_summary.http_method
+  resource_id = aws_api_gateway_resource.summary.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = aws_api_gateway_method_response.options_summary.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,GET'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+  depends_on = [aws_api_gateway_integration.options_summary]
 }
 
 # ---------------------------------------------------------------------------
@@ -83,6 +169,49 @@ resource "aws_api_gateway_integration" "post_summarize" {
   uri                     = var.lambda_invoke_arn
 }
 
+# CORS preflight for /summarize
+resource "aws_api_gateway_method" "options_summarize" {
+  authorization = "NONE"
+  http_method   = "OPTIONS"
+  resource_id   = aws_api_gateway_resource.summarize.id
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+}
+
+resource "aws_api_gateway_integration" "options_summarize" {
+  http_method = aws_api_gateway_method.options_summarize.http_method
+  resource_id = aws_api_gateway_resource.summarize.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  type        = "MOCK"
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "options_summarize" {
+  http_method = aws_api_gateway_method.options_summarize.http_method
+  resource_id = aws_api_gateway_resource.summarize.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = "200"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "options_summarize" {
+  http_method = aws_api_gateway_method.options_summarize.http_method
+  resource_id = aws_api_gateway_resource.summarize.id
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  status_code = aws_api_gateway_method_response.options_summarize.status_code
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+  depends_on = [aws_api_gateway_integration.options_summarize]
+}
+
 # ---------------------------------------------------------------------------
 # Deployment + Stage
 # ---------------------------------------------------------------------------
@@ -98,9 +227,15 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_method.post_audit.id,
       aws_api_gateway_method.get_summary.id,
       aws_api_gateway_method.post_summarize.id,
+      aws_api_gateway_method.options_audit.id,
+      aws_api_gateway_method.options_summary.id,
+      aws_api_gateway_method.options_summarize.id,
       aws_api_gateway_integration.post_audit.id,
       aws_api_gateway_integration.get_summary.id,
       aws_api_gateway_integration.post_summarize.id,
+      aws_api_gateway_integration.options_audit.id,
+      aws_api_gateway_integration.options_summary.id,
+      aws_api_gateway_integration.options_summarize.id,
     ]))
   }
 
@@ -112,6 +247,9 @@ resource "aws_api_gateway_deployment" "api" {
     aws_api_gateway_integration.post_audit,
     aws_api_gateway_integration.get_summary,
     aws_api_gateway_integration.post_summarize,
+    aws_api_gateway_integration_response.options_audit,
+    aws_api_gateway_integration_response.options_summary,
+    aws_api_gateway_integration_response.options_summarize,
   ]
 }
 

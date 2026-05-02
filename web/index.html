@@ -4,13 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Platform Ops Auditor</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header>
     <div class="header-inner">
-      <h1>Platform Ops Auditor</h1>
-      <p class="subtitle">Internal Developer Platform &mdash; Operational Intelligence</p>
+      <div class="header-brand">
+        <div>
+          <h1>Platform Ops Auditor</h1>
+          <p class="subtitle">Internal Developer Platform &mdash; Operational Intelligence</p>
+        </div>
+        <span class="api-pill" id="api-status-pill">
+          <span class="api-pill-dot"></span>
+          <span id="api-status-text">Connecting&hellip;</span>
+        </span>
+      </div>
     </div>
   </header>
 
@@ -48,50 +60,69 @@
           <input type="text" id="owner" name="owner" placeholder="payments-team" />
         </div>
         <div class="field-row field-row--action">
-          <button type="submit" id="submit-btn">Submit Audit</button>
+          <button type="submit" id="submit-btn" aria-label="Submit service audit">Submit Audit</button>
         </div>
-        <div id="audit-result" class="result-box" hidden></div>
+        <div id="audit-result" class="result-box" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+        <div id="score-bar-wrap" hidden>
+          <div class="score-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="score-bar-aria">
+            <div class="score-bar-fill" id="score-bar-fill"></div>
+          </div>
+        </div>
       </form>
     </section>
 
     <!-- Operational Summary -->
     <section class="card" id="summary-section">
       <div class="card-header">
-        <h2>Operational Summary</h2>
-        <button id="refresh-btn" type="button">Refresh Summary</button>
+        <h2><span class="live-dot" aria-hidden="true"></span>Operational Summary</h2>
+        <button id="refresh-btn" type="button">Refresh</button>
       </div>
-      <div id="summary-result" class="result-box" hidden></div>
+      <div id="summary-result" class="result-box" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div id="summary-content">
         <div class="stats-grid">
           <div class="stat-block">
             <span class="stat-label">Total Services Audited</span>
-            <span class="stat-value" id="stat-total">—</span>
+            <span class="stat-value skeleton" id="stat-total">&mdash;</span>
           </div>
-          <div class="stat-block">
+          <div class="stat-block" id="stat-avg-block">
             <span class="stat-label">Average Score</span>
-            <span class="stat-value" id="stat-avg">—</span>
+            <span class="stat-value skeleton" id="stat-avg">&mdash;</span>
           </div>
         </div>
 
         <div class="breakdown-grid">
           <div>
             <h3>By Environment</h3>
-            <ul id="by-environment" class="kv-list"></ul>
+            <ul id="by-environment" class="kv-list">
+              <li class="skeleton-line"></li>
+              <li class="skeleton-line"></li>
+              <li class="skeleton-line"></li>
+            </ul>
           </div>
           <div>
             <h3>By Status</h3>
-            <ul id="by-status" class="kv-list"></ul>
+            <ul id="by-status" class="kv-list">
+              <li class="skeleton-line"></li>
+              <li class="skeleton-line"></li>
+              <li class="skeleton-line"></li>
+            </ul>
           </div>
         </div>
 
         <div>
           <h3>Top Findings</h3>
-          <ul id="top-findings" class="finding-list"></ul>
+          <ul id="top-findings" class="finding-list">
+            <li class="skeleton-line"></li>
+            <li class="skeleton-line"></li>
+          </ul>
         </div>
 
         <div>
           <h3>Recent Operational Events</h3>
-          <ul id="recent-events" class="event-list"></ul>
+          <ul id="recent-events" class="event-list">
+            <li class="skeleton-line"></li>
+            <li class="skeleton-line"></li>
+          </ul>
         </div>
       </div>
     </section>
@@ -102,7 +133,7 @@
         <h2>AI Platform Summary</h2>
         <button id="ai-btn" type="button">Generate AI Summary</button>
       </div>
-      <div id="ai-result" class="result-box" hidden></div>
+      <div id="ai-result" class="result-box" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div id="ai-content" hidden>
         <p class="ai-text" id="ai-text"></p>
         <p class="ai-meta" id="ai-meta"></p>
@@ -111,7 +142,13 @@
   </main>
 
   <footer>
-    <p>Platform Ops Auditor &mdash; Internal Developer Platform &mdash; Powered by AWS Lambda &bull; API Gateway &bull; DynamoDB</p>
+    <div class="footer-meta">
+      <span>Platform Ops Auditor &mdash; AWS Lambda &bull; API Gateway &bull; DynamoDB</span>
+      <span id="footer-timestamp" class="footer-ts"></span>
+    </div>
+    <a class="footer-url" href="http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com" target="_blank" rel="noopener">
+      platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com
+    </a>
   </footer>
 
   <script src="app.js"></script>

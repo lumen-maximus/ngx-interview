@@ -2,8 +2,6 @@
 // Platform Ops Auditor — Static Developer Console
 // ---------------------------------------------------------------------------
 
-// Replace this value with the Terraform output `api_base_url` after deployment.
-// Example: "https://1onxy44pd3.execute-api.us-east-1.amazonaws.com/dev"
 const API_BASE_URL = "https://1onxy44pd3.execute-api.us-east-1.amazonaws.com/dev";
 
 // ---------------------------------------------------------------------------
@@ -12,6 +10,13 @@ const API_BASE_URL = "https://1onxy44pd3.execute-api.us-east-1.amazonaws.com/dev
 
 function showResult(el, type, message) {
   el.textContent = message;
+  el.className = `result-box ${type}`;
+  el.hidden = false;
+}
+
+// Used only for controlled, hardcoded HTML — never with user-supplied data.
+function showResultHTML(el, type, html) {
+  el.innerHTML = html;
   el.className = `result-box ${type}`;
   el.hidden = false;
 }
@@ -27,22 +32,81 @@ function setLoading(btn, loading) {
   btn.textContent = loading ? "Loading…" : btn.dataset.label;
 }
 
+function scoreClass(score) {
+  if (score >= 80) return "score-good";
+  if (score >= 50) return "score-warn";
+  return "score-bad";
+}
+
 // Store original button labels on page load.
 document.querySelectorAll("button").forEach((btn) => {
   btn.dataset.label = btn.textContent;
 });
 
 // ---------------------------------------------------------------------------
+// Footer timestamp
+// ---------------------------------------------------------------------------
+
+function initFooterTimestamp() {
+  const el = document.getElementById("footer-timestamp");
+  if (el) el.textContent = `Loaded ${new Date().toLocaleString()}`;
+}
+
+initFooterTimestamp();
+
+// ---------------------------------------------------------------------------
+// API status pill
+// ---------------------------------------------------------------------------
+
+function setApiStatus(connected) {
+  const pill = document.getElementById("api-status-pill");
+  const text = document.getElementById("api-status-text");
+  if (!pill || !text) return;
+  pill.classList.remove("connected", "unreachable");
+  pill.classList.add(connected ? "connected" : "unreachable");
+  text.textContent = connected ? "API Connected" : "API Unreachable";
+}
+
+// ---------------------------------------------------------------------------
+// Score bar
+// ---------------------------------------------------------------------------
+
+function showScoreBar(score) {
+  const wrap = document.getElementById("score-bar-wrap");
+  const fill = document.getElementById("score-bar-fill");
+  const aria = document.getElementById("score-bar-aria");
+  if (!wrap || !fill) return;
+  wrap.hidden = false;
+  // Remove classes for clean transition start
+  fill.className = "score-bar-fill";
+  fill.style.width = "0";
+  // Double rAF to ensure transition fires after initial render
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      fill.classList.add(scoreClass(score));
+      fill.style.width = `${score}%`;
+      if (aria) aria.setAttribute("aria-valuenow", String(score));
+    });
+  });
+}
+
+function hideScoreBar() {
+  const wrap = document.getElementById("score-bar-wrap");
+  if (wrap) wrap.hidden = true;
+}
+
+// ---------------------------------------------------------------------------
 // POST /audit
 // ---------------------------------------------------------------------------
 
-const auditForm = document.getElementById("audit-form");
+const auditForm   = document.getElementById("audit-form");
 const auditResult = document.getElementById("audit-result");
-const submitBtn = document.getElementById("submit-btn");
+const submitBtn   = document.getElementById("submit-btn");
 
 auditForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   hideResult(auditResult);
+  hideScoreBar();
 
   const body = {
     service_name: document.getElementById("service_name").value.trim(),
@@ -52,7 +116,6 @@ auditForm.addEventListener("submit", async (e) => {
     owner:        document.getElementById("owner").value.trim() || undefined,
   };
 
-  // Remove undefined keys so the JSON body stays clean.
   Object.keys(body).forEach((k) => body[k] === undefined && delete body[k]);
 
   if (!body.service_name) {
@@ -69,12 +132,17 @@ auditForm.addEventListener("submit", async (e) => {
     });
     const data = await res.json();
     if (res.ok) {
+      const cls = scoreClass(data.score);
+      const statusIcon = cls === "score-good" ? "✓" : cls === "score-warn" ? "⚠" : "✗";
       showResult(
         auditResult,
         "success",
-        `Audit recorded — Score: ${data.score}/100  |  ID: ${data.audit_id}`
+        `${statusIcon}  Score: ${data.score}/100  ·  Audit ID: ${data.audit_id}`
       );
+      showScoreBar(data.score);
       auditForm.reset();
+      // Refresh summary after a short delay so new record is visible
+      setTimeout(loadSummary, 600);
     } else {
       showResult(auditResult, "error", `Error ${res.status}: ${data.message || data.error || JSON.stringify(data)}`);
     }
@@ -89,8 +157,10 @@ auditForm.addEventListener("submit", async (e) => {
 // GET /summary
 // ---------------------------------------------------------------------------
 
-const refreshBtn = document.getElementById("refresh-btn");
+const refreshBtn   = document.getElementById("refresh-btn");
 const summaryResult = document.getElementById("summary-result");
+const summaryContent = document.getElementById("summary-content");
+let summaryLoaded = false;
 
 async function loadSummary() {
   hideResult(summaryResult);
@@ -98,21 +168,36 @@ async function loadSummary() {
   try {
     const res = await fetch(`${API_BASE_URL}/summary`);
     const data = await res.json();
+
+    setApiStatus(res.ok);
+
     if (!res.ok) {
       showResult(summaryResult, "error", `Error ${res.status}: ${data.message || data.error || JSON.stringify(data)}`);
       return;
     }
 
     // Stats
-    document.getElementById("stat-total").textContent = data.total_services_audited ?? "—";
-    document.getElementById("stat-avg").textContent =
-      data.average_score != null ? `${data.average_score}` : "—";
+    const totalEl = document.getElementById("stat-total");
+    const avgEl   = document.getElementById("stat-avg");
+    const avgBlock = document.getElementById("stat-avg-block");
+
+    totalEl.classList.remove("skeleton");
+    avgEl.classList.remove("skeleton");
+    totalEl.textContent = data.total_services_audited ?? "—";
+
+    const avg = data.average_score;
+    avgEl.textContent = avg != null ? String(avg) : "—";
+
+    if (avgBlock && avg != null) {
+      avgBlock.classList.remove("score-good", "score-warn", "score-bad");
+      avgBlock.classList.add(scoreClass(avg));
+    }
 
     // By environment
-    renderKvList("by-environment", data.by_environment);
+    renderEnvList("by-environment", data.by_environment);
 
     // By status
-    renderKvList("by-status", data.by_status);
+    renderStatusList("by-status", data.by_status);
 
     // Top findings
     const findingsEl = document.getElementById("top-findings");
@@ -124,7 +209,10 @@ async function loadSummary() {
         findingsEl.appendChild(li);
       });
     } else {
-      findingsEl.innerHTML = "<li style='color:var(--muted)'>No findings recorded.</li>";
+      const li = document.createElement("li");
+      li.style.color = "var(--muted)";
+      li.textContent = "No findings recorded.";
+      findingsEl.appendChild(li);
     }
 
     // Recent events
@@ -137,45 +225,89 @@ async function loadSummary() {
         eventsEl.appendChild(li);
       });
     } else {
-      eventsEl.innerHTML = "<li style='color:var(--muted)'>No recent events.</li>";
+      const li = document.createElement("li");
+      li.style.color = "var(--muted)";
+      li.textContent = "No recent events.";
+      eventsEl.appendChild(li);
+    }
+
+    // Fade-up on first load only
+    if (!summaryLoaded && summaryContent) {
+      summaryContent.classList.add("fade-in-up");
+      summaryLoaded = true;
     }
   } catch (err) {
+    setApiStatus(false);
     showResult(summaryResult, "error", `Network error: ${err.message}`);
   } finally {
     setLoading(refreshBtn, false);
   }
 }
 
-function renderKvList(elId, obj) {
+function renderEnvList(elId, obj) {
   const el = document.getElementById(elId);
   el.innerHTML = "";
   if (!obj || Object.keys(obj).length === 0) {
-    el.innerHTML = "<li style='color:var(--muted)'>No data.</li>";
+    const li = document.createElement("li");
+    li.style.color = "var(--muted)";
+    li.textContent = "No data.";
+    el.appendChild(li);
     return;
   }
   Object.entries(obj).forEach(([key, val]) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span>${key}</span><span class="kv-count">${val}</span>`;
+    const dot = document.createElement("span");
+    dot.className = `env-dot env-dot--${key}`;
+    const name = document.createElement("span");
+    name.appendChild(dot);
+    name.appendChild(document.createTextNode(key));
+    const count = document.createElement("span");
+    count.className = "kv-count";
+    count.textContent = String(val);
+    li.appendChild(name);
+    li.appendChild(count);
+    el.appendChild(li);
+  });
+}
+
+function renderStatusList(elId, obj) {
+  const el = document.getElementById(elId);
+  el.innerHTML = "";
+  if (!obj || Object.keys(obj).length === 0) {
+    const li = document.createElement("li");
+    li.style.color = "var(--muted)";
+    li.textContent = "No data.";
+    el.appendChild(li);
+    return;
+  }
+  const colorMap = { healthy: "kv-status-healthy", degraded: "kv-status-degraded", unhealthy: "kv-status-unhealthy" };
+  Object.entries(obj).forEach(([key, val]) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = key;
+    const count = document.createElement("span");
+    count.className = `kv-count ${colorMap[key] || ""}`.trim();
+    count.textContent = String(val);
+    li.appendChild(name);
+    li.appendChild(count);
     el.appendChild(li);
   });
 }
 
 refreshBtn.addEventListener("click", loadSummary);
-
-// Auto-load summary on page open.
 loadSummary();
 
 // ---------------------------------------------------------------------------
-// POST /summarize  (optional Bedrock AI summary)
+// POST /summarize
 // ---------------------------------------------------------------------------
 
-const aiBtn = document.getElementById("ai-btn");
-const aiResult = document.getElementById("ai-result");
+const aiBtn     = document.getElementById("ai-btn");
+const aiResult  = document.getElementById("ai-result");
 const aiContent = document.getElementById("ai-content");
 
 aiBtn.addEventListener("click", async () => {
-  hideResult(aiResult);
   aiContent.hidden = true;
+  hideResult(aiResult);
   setLoading(aiBtn, true);
   try {
     const res = await fetch(`${API_BASE_URL}/summarize`, {
@@ -184,26 +316,25 @@ aiBtn.addEventListener("click", async () => {
       body: JSON.stringify({}),
     });
     const data = await res.json();
-
     if (res.status === 501) {
-      // Bedrock is disabled in Terraform — show a clean informational message.
-      showResult(
+      // Hardcoded HTML — no user data involved, safe from XSS
+      showResultHTML(
         aiResult,
-        "info",
-        "AI summary is disabled. Set enable_bedrock_summary = true in terraform.tfvars and redeploy to enable it."
+        "warn",
+        `AI summaries are currently disabled (<code>bedrock_stub = true</code>).<br>` +
+        `To enable live Bedrock responses, set in <code>terraform/terraform.tfvars</code>:` +
+        `<code class="ai-hint-code">enable_bedrock_summary = true\nbedrock_stub           = false</code>` +
+        `Then run <code>terraform apply</code> and redeploy.`
       );
       return;
     }
-
     if (!res.ok) {
-      showResult(aiResult, "error", `Error ${res.status}: ${data.message || data.error || JSON.stringify(data)}`);
+      showResult(aiResult, "error", `Error ${res.status}: ${data.error || JSON.stringify(data)}`);
       return;
     }
-
     document.getElementById("ai-text").textContent = data.summary;
-    const ts = data.generated_at ? new Date(data.generated_at * 1000).toLocaleString() : "";
     document.getElementById("ai-meta").textContent =
-      `Model: ${data.model_id}${ts ? "  |  Generated: " + ts : ""}${data.summary_id ? "  |  ID: " + data.summary_id : ""}`;
+      `Model: ${data.model_id} · Generated ${new Date().toLocaleTimeString()}`;
     aiContent.hidden = false;
   } catch (err) {
     showResult(aiResult, "error", `Network error: ${err.message}`);
