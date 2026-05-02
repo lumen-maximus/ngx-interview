@@ -307,6 +307,7 @@ class TestParseBody(unittest.TestCase):
         event = {"body": '{"key": "val"}'}
         body, err = handler._parse_body(event)
         self.assertIsNone(err)
+        assert body is not None
         self.assertEqual(body["key"], "val")
 
     def test_invalid_json(self):

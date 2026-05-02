@@ -115,3 +115,18 @@ jobs:
       - name: Terraform Apply
         if: ${{ steps.aws_check.outputs.configured == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true' }}
         run: terraform apply -auto-approve tfplan
+
+      - name: Sync web assets to S3
+        if: ${{ steps.aws_check.outputs.configured == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          BUCKET=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw web_bucket_name 2>/dev/null || true)
+          if [ -n "$BUCKET" ]; then
+            aws s3 sync web/ "s3://${BUCKET}" --delete --cache-control "max-age=300"
+            DIST_ID=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw cloudfront_distribution_id 2>/dev/null || true)
+            if [ -n "$DIST_ID" ]; then
+              aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+            fi
+          else
+            echo "enable_static_console = false — skipping web sync."
+          fi

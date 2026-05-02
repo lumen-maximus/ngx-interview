@@ -39,3 +39,9 @@ variable "bedrock_model_arn" {
   type        = string
   default     = "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
 }
+
+variable "enable_static_console" {
+  description = "Deploy the optional S3 + CloudFront static developer console"
+  type        = bool
+  default     = false
+}

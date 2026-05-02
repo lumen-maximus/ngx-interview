@@ -61,3 +61,12 @@ module "observability" {
   name_prefix          = local.name_prefix
   tags                 = local.tags
 }
+
+module "web" {
+  count  = var.enable_static_console ? 1 : 0
+  source = "./modules/web"
+
+  account_id  = data.aws_caller_identity.current.account_id
+  name_prefix = local.name_prefix
+  tags        = local.tags
+}

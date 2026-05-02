@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Platform Ops Auditor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Platform Ops Auditor</h1>
+      <p class="subtitle">Internal Developer Platform &mdash; Operational Intelligence</p>
+    </div>
+  </header>
+
+  <main>
+    <!-- Submit Audit -->
+    <section class="card" id="audit-section">
+      <h2>Submit Service Audit</h2>
+      <form id="audit-form" novalidate>
+        <div class="field-row">
+          <label for="service_name">Service Name</label>
+          <input type="text" id="service_name" name="service_name" placeholder="my-payments-api" required />
+        </div>
+        <div class="field-row">
+          <label for="environment">Environment</label>
+          <select id="environment" name="environment">
+            <option value="dev">dev</option>
+            <option value="staging">staging</option>
+            <option value="prod">prod</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="status">Status</label>
+          <select id="status" name="status">
+            <option value="healthy">healthy</option>
+            <option value="degraded">degraded</option>
+            <option value="unhealthy">unhealthy</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="repository">Repository</label>
+          <input type="text" id="repository" name="repository" placeholder="org/my-payments-api" />
+        </div>
+        <div class="field-row">
+          <label for="owner">Owner</label>
+          <input type="text" id="owner" name="owner" placeholder="payments-team" />
+        </div>
+        <div class="field-row field-row--action">
+          <button type="submit" id="submit-btn">Submit Audit</button>
+        </div>
+        <div id="audit-result" class="result-box" hidden></div>
+      </form>
+    </section>
+
+    <!-- Operational Summary -->
+    <section class="card" id="summary-section">
+      <div class="card-header">
+        <h2>Operational Summary</h2>
+        <button id="refresh-btn" type="button">Refresh Summary</button>
+      </div>
+      <div id="summary-result" class="result-box" hidden></div>
+      <div id="summary-content">
+        <div class="stats-grid">
+          <div class="stat-block">
+            <span class="stat-label">Total Services Audited</span>
+            <span class="stat-value" id="stat-total">—</span>
+          </div>
+          <div class="stat-block">
+            <span class="stat-label">Average Score</span>
+            <span class="stat-value" id="stat-avg">—</span>
+          </div>
+        </div>
+
+        <div class="breakdown-grid">
+          <div>
+            <h3>By Environment</h3>
+            <ul id="by-environment" class="kv-list"></ul>
+          </div>
+          <div>
+            <h3>By Status</h3>
+            <ul id="by-status" class="kv-list"></ul>
+          </div>
+        </div>
+
+        <div>
+          <h3>Top Findings</h3>
+          <ul id="top-findings" class="finding-list"></ul>
+        </div>
+
+        <div>
+          <h3>Recent Operational Events</h3>
+          <ul id="recent-events" class="event-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI Summary -->
+    <section class="card" id="ai-section">
+      <div class="card-header">
+        <h2>AI Platform Summary</h2>
+        <button id="ai-btn" type="button">Generate AI Summary</button>
+      </div>
+      <div id="ai-result" class="result-box" hidden></div>
+      <div id="ai-content" hidden>
+        <p class="ai-text" id="ai-text"></p>
+        <p class="ai-meta" id="ai-meta"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Platform Ops Auditor &mdash; Internal Developer Platform &mdash; Powered by AWS Lambda &bull; API Gateway &bull; DynamoDB</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

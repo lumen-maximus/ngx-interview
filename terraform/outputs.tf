@@ -38,6 +38,21 @@ output "sns_topic_arn" {
   value       = module.observability.sns_topic_arn
 }
 
+output "web_bucket_name" {
+  description = "S3 bucket name for static console assets (empty when enable_static_console = false)"
+  value       = length(module.web) > 0 ? module.web[0].bucket_name : ""
+}
+
+output "cloudfront_url" {
+  description = "CloudFront URL for the static developer console (empty when enable_static_console = false)"
+  value       = length(module.web) > 0 ? module.web[0].cloudfront_url : ""
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for cache invalidation (empty when enable_static_console = false)"
+  value       = length(module.web) > 0 ? module.web[0].cloudfront_distribution_id : ""
+}
+
 output "dashboard_name" {
   description = "CloudWatch dashboard name"
   value       = module.observability.dashboard_name

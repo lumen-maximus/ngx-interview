@@ -99,3 +99,25 @@ The project explicitly does **not** claim full Option 2 completion unless Bedroc
 - **AI-assisted CI** — Copilot reviewer that flags wildcards and missing tests before human review
 - **Multi-region deployment** — DynamoDB Global Tables + per-region API Gateway + Route 53 latency routing
 - **SNS subscriptions via Terraform variable** — let the deployer specify email/PagerDuty/Slack endpoints declaratively
+
+## 9. Static developer console: plain HTML over React, S3 + CloudFront over containers
+
+**Decision:** Ship a static `web/` console (plain HTML, CSS, vanilla JS) hosted on S3 + CloudFront with Origin Access Control. No React, no build pipeline, no authentication.
+
+**Alternatives considered:**
+
+| Option | Why rejected |
+|--------|-------------|
+| React / Next.js | Introduces npm, Webpack/Vite, a build step, and hundreds of transitive dependencies — all for a single-page internal tool. Adds CI complexity with no commensurate value for a demo. |
+| ECS-hosted frontend | Adds a container image build, an ALB, and a task definition. The static files have no server-side logic; a CDN is cheaper, faster, and simpler. |
+| Cognito auth | The primary audience is internal platform engineers in a demo context. Auth is listed as "do not add" in the project brief. It can be layered on later with CloudFront signed URLs or a Cognito hosted UI. |
+| Single-page app inside API Gateway | Would require binary media type support and CORS tweaks. Terraform module complexity outweighs the saving of one CloudFront resource. |
+
+**Why S3 + CloudFront + OAC:**
+
+- S3 bucket is private. The public access block is fully enabled. CloudFront OAC is the only allowed principal via a `StringEquals AWS:SourceArn` condition — no wildcard principal, no `s3:*`.
+- CloudFront gives HTTPS by default (redirect HTTP → HTTPS), edge caching, and a globally stable URL.
+- The entire infra is wrapped in `count = var.enable_static_console ? 1 : 0` so it is opt-in. No web infrastructure is created unless the flag is set.
+- GitHub Actions syncs `web/` after `terraform apply` and creates a CloudFront invalidation — deploy is fully automated, consistent with the immutable infrastructure principle.
+
+**Why auth was omitted for MVP scope:** The console calls only `GET /summary` (read) and `POST /audit` / `POST /summarize` (write). For a demo, the blast radius of unauthenticated writes is a handful of DynamoDB items. For production, the recommended path is CloudFront signed URLs with a Lambda@Edge authorizer or an API Gateway API key — both can be added without changing the static files or the Lambda handler.

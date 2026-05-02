@@ -429,12 +429,92 @@ This project uses GitHub Copilot Chat / Copilot cloud agent as its AI-native wor
 1. `terraform init && terraform validate && terraform test` — show 9 Terraform tests pass
 2. `pytest app/` — show 30 Python tests pass
 3. `terraform apply` — deploy to AWS
-4. `curl POST /audit` — create a healthy audit record (score 95)
-5. `curl POST /audit` (validation failure) — show 400 + stored operational event
-6. `curl GET /summary` — show aggregated intelligence including `top_findings` and `recent_operational_events`
-7. `curl POST /summarize` — show 501 (Bedrock disabled by default)
-8. Open CloudWatch dashboard — show Lambda metrics
-9. Show DynamoDB tables — audit records + operational events
-10. Show CloudWatch alarm wired to SNS
-11. Walk through `terraform/tests/platform_ops_auditor.tftest.hcl` — explain the no-wildcard IAM assertions
-12. Walk through `docs/AI_WORKFLOW.md` and `docs/COPILOT_REVIEW_NOTES.md` — explain how Copilot was used and course-corrected
+4. Open CloudFront URL — **Platform Ops Console** loads in browser
+5. Submit a service audit from the UI form — observe Score + audit_id returned
+6. Click **Refresh Summary** — aggregated operational intelligence updates live
+7. Click **Generate AI Summary** — shows AI posture summary (stub or live Bedrock)
+8. `curl POST /audit` (validation failure) — show 400 + stored operational event
+9. Open CloudWatch dashboard — show Lambda metrics
+10. Show DynamoDB tables — audit records + operational events
+11. Show CloudWatch alarm wired to SNS
+12. Walk through `terraform/tests/platform_ops_auditor.tftest.hcl` — explain the no-wildcard IAM assertions
+13. Walk through `docs/AI_WORKFLOW.md` and `docs/COPILOT_REVIEW_NOTES.md` — explain how Copilot was used and course-corrected
+
+---
+
+## Optional Static Developer Console
+
+The project includes a lightweight static UI in `web/` hosted on S3 + CloudFront. The API remains the primary service. The console exists to make the demo tangible and to demonstrate platform-as-a-product thinking without introducing a full frontend framework.
+
+### Architecture
+
+```
+Browser → CloudFront (HTTPS) → S3 (private bucket, OAC) → index.html / styles.css / app.js
+                                                              ↓ fetch()
+                                                API Gateway → Lambda → DynamoDB
+```
+
+### Console wireframe
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Platform Ops Auditor                                        │
+│  Internal Developer Platform — Operational Intelligence      │
+├──────────────────────────────────────────────────────────────┤
+│  Submit Service Audit                                        │
+│  Service Name  [________________]                            │
+│  Environment   [dev ▼]                                       │
+│  Status        [healthy ▼]                                   │
+│  Repository    [________________]                            │
+│  Owner         [________________]                            │
+│                                        [ Submit Audit ]      │
+├──────────────────────────────────────────────────────────────┤
+│  Operational Summary               [ Refresh Summary ]       │
+│  Total Services Audited: 9    Average Score: 83              │
+│  By Environment: dev 3, staging 3, prod 3                    │
+│  By Status:      healthy 3, degraded 3, unhealthy 3          │
+│  Top Findings: dependency_check, service owner missing       │
+│  Recent Events: audit_created, summary_generated             │
+├──────────────────────────────────────────────────────────────┤
+│  AI Platform Summary           [ Generate AI Summary ]       │
+│  (Bedrock stub or live — one tfvar flip)                     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Configure API_BASE_URL
+
+After `terraform apply`, set the API URL in `web/app.js`:
+
+```bash
+# Get the deployed API URL
+terraform -chdir=terraform output -raw api_base_url
+# → https://<id>.execute-api.us-east-1.amazonaws.com/dev
+```
+
+Then edit the constant at the top of [web/app.js](web/app.js):
+
+```js
+const API_BASE_URL = "https://<id>.execute-api.us-east-1.amazonaws.com/dev";
+```
+
+The GitHub Actions workflow automatically syncs `web/` to S3 and invalidates the CloudFront cache after every `terraform apply` run, so the URL is always current once initially configured.
+
+### Deploy or sync manually
+
+```bash
+# Sync web assets
+aws s3 sync web/ s3://$(terraform -chdir=terraform output -raw web_bucket_name) --delete
+
+# Invalidate CloudFront cache
+aws cloudfront create-invalidation \
+  --distribution-id $(terraform -chdir=terraform output -raw cloudfront_distribution_id) \
+  --paths "/*"
+```
+
+### Enable / disable
+
+```hcl
+# terraform/terraform.tfvars
+enable_static_console = true   # deploy S3 + CloudFront
+enable_static_console = false  # no web infrastructure created
+```
