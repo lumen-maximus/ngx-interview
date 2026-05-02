@@ -34,9 +34,9 @@ resource "aws_cloudwatch_dashboard" "main" {
             ["AWS/Lambda", "Duration", "FunctionName", var.lambda_function_name],
             ["AWS/Lambda", "Throttles", "FunctionName", var.lambda_function_name],
           ]
-          period  = 60
-          region  = var.aws_region
-          stat    = "Sum"
+          period = 60
+          region = var.aws_region
+          stat   = "Sum"
           title  = "Platform Ops Auditor — Lambda Metrics"
           view   = "timeSeries"
         }
