@@ -33,6 +33,7 @@ module "lambda" {
 
   audit_table_name       = module.data.audit_table_name
   bedrock_model_id       = var.bedrock_model_id
+  bedrock_stub           = var.bedrock_stub
   enable_bedrock_summary = var.enable_bedrock_summary
   events_table_name      = module.data.events_table_name
   name_prefix            = local.name_prefix

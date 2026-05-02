@@ -28,6 +28,12 @@ variable "bedrock_model_id" {
   default     = "amazon.nova-lite-v1:0"
 }
 
+variable "bedrock_stub" {
+  description = "Return a canned stub response instead of calling Bedrock (for accounts pending access)"
+  type        = bool
+  default     = false
+}
+
 variable "bedrock_model_arn" {
   description = "Exact Bedrock foundation model ARN granted to Lambda when enable_bedrock_summary is true"
   type        = string

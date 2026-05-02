@@ -34,7 +34,7 @@ data "aws_iam_policy_document" "lambda_policy" {
   dynamic "statement" {
     for_each = var.enable_bedrock_summary ? [1] : []
     content {
-      actions   = ["bedrock:InvokeModel"]
+      actions   = ["bedrock:Converse", "bedrock:InvokeModel"]
       effect    = "Allow"
       resources = [var.bedrock_model_arn]
       sid       = "BedrockInvokeModel"
@@ -53,7 +53,7 @@ locals {
 
   policy_actions = concat(
     ["dynamodb:PutItem", "dynamodb:Scan"],
-    var.enable_bedrock_summary ? ["bedrock:InvokeModel"] : []
+    var.enable_bedrock_summary ? ["bedrock:Converse", "bedrock:InvokeModel"] : []
   )
 }
 

@@ -23,6 +23,7 @@ resource "aws_lambda_function" "app" {
       EVENTS_TABLE_NAME      = var.events_table_name
       ENABLE_BEDROCK_SUMMARY = tostring(var.enable_bedrock_summary)
       BEDROCK_MODEL_ID       = var.bedrock_model_id
+      BEDROCK_STUB           = tostring(var.bedrock_stub)
     }
   }
 }

@@ -26,6 +26,7 @@ EVENTS_TABLE = os.environ.get("EVENTS_TABLE_NAME") or os.environ.get("EVENTS_TAB
 
 ENABLE_BEDROCK_SUMMARY = os.environ.get("ENABLE_BEDROCK_SUMMARY", "false").lower() == "true"
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
+BEDROCK_STUB = os.environ.get("BEDROCK_STUB", "false").lower() == "true"
 
 VALID_ENVIRONMENTS = {"dev", "staging", "prod"}
 VALID_STATUSES = {"healthy", "degraded", "unhealthy"}
@@ -246,29 +247,25 @@ def build_bedrock_prompt(aggregate: dict) -> str:
 def invoke_bedrock_model(prompt: str, model_id: str) -> str:
     """Invoke a Bedrock foundation model and return the generated text.
 
-    Model-specific request and response shapes are isolated here so this is the
-    only function that needs to change to support a different model family.
+    Uses the Converse API which is the recommended path for Amazon Nova and
+    cross-region inference profiles. BEDROCK_STUB bypasses the real call for
+    demo/test environments where account-level Bedrock access is pending.
     """
+    if BEDROCK_STUB:
+        return (
+            "Platform posture summary (stub): 9 services audited across dev, staging, and prod. "
+            "Overall health is mixed — prod services score 95/100, staging shows degraded "
+            "connectivity on 2 services (score 60-70), and dev has 1 unhealthy service (score 40). "
+            "Top risk: dependency_check findings in staging. Recommend immediate review of "
+            "network policies and dependency versions before next production release."
+        )
     client = boto3.client("bedrock-runtime")
-    body = json.dumps(
-        {
-            "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": 400, "temperature": 0.2},
-        }
+    response = client.converse(
+        modelId=model_id,
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": 400, "temperature": 0.2},
     )
-    response = client.invoke_model(modelId=model_id, body=body, contentType="application/json")
-    payload = json.loads(response["body"].read())
-    # Amazon Nova / Converse-style response shape
-    try:
-        return payload["output"]["message"]["content"][0]["text"]
-    except (KeyError, IndexError, TypeError):
-        # Fallback for other model families (Anthropic, etc.)
-        if isinstance(payload.get("completion"), str):
-            return payload["completion"]
-        if isinstance(payload.get("outputText"), str):
-            return payload["outputText"]
-        # Unknown shape — never leak the raw payload to API callers.
-        raise ValueError("Unsupported Bedrock model response shape")
+    return response["output"]["message"]["content"][0]["text"]
 
 
 def summarize_platform_posture() -> dict:
