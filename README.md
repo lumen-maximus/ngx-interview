@@ -6,9 +6,22 @@
 
 ---
 
+## 🚀 Live Demo
+
+> **The Platform Ops Console is deployed and live — open it now:**
+>
+> ### 👉 [http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/](http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/)
+
+No credentials required. Visit the link to interact with the deployed service directly:
+- Submit a service audit via the **Submit Service Audit** form
+- View aggregated platform health via **Refresh Summary**
+- Generate an AI posture summary via **Generate AI Summary**
+
+---
+
 ## Project Summary
 
-**Platform Ops Auditor** lets developers submit service audit metadata through a REST API. The service validates input, calculates a lightweight operational health score, stores audit records and structured operational events in DynamoDB, and exposes a summary endpoint that aggregates platform operational intelligence.
+**Platform Ops Auditor** lets developers submit service audit metadata through a REST API. The service validates input, calculates a lightweight operational health score, stores audit records and operational events in DynamoDB, and exposes an aggregated operational intelligence summary.
 
 This project is:
 - **Packaged for AWS Lambda** (Python 3.12, `handler.handler`)
@@ -18,15 +31,15 @@ This project is:
 - **Accessible after deployment through Terraform outputs**
 - **Built with strict no-wildcard IAM** — no `Action: *`, no `Resource: *`, no ARN wildcards
 
-No application secrets are required for this MVP. AWS credentials are referenced only through GitHub Actions secrets (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). The Lambda function itself requires no secrets — it uses its IAM role to access DynamoDB and (optionally) Bedrock.
+No application secrets are required for this MVP. AWS credentials are referenced only through GitHub Actions secrets (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). The Lambda function itself requires no secrets.
 
 ---
 
 ## What Problem This Solves
 
-Internal developer platforms (IDPs) need visibility into the services that run on them. Platform Ops Auditor solves a real IDP problem: **how do you collect and aggregate service health metadata from many teams, without standing up heavy infrastructure?**
+Internal developer platforms (IDPs) need visibility into the services that run on them. Platform Ops Auditor solves a real IDP problem: **how do you collect and aggregate service health metadata from many teams in a lightweight, auditable way?**
 
-Teams `POST` audit records for their services. The platform team queries `GET /summary` to see overall platform health, environment breakdown, status distribution, and recent operational signals — all from a single lightweight API backed by serverless infrastructure.
+Teams `POST` audit records for their services. The platform team queries `GET /summary` to see overall platform health, environment breakdown, status distribution, and recent operational signals — all without standing up a dedicated monitoring stack.
 
 ---
 
@@ -51,7 +64,7 @@ Teams `POST` audit records for their services. The platform team queries `GET /s
 - `recent_operational_events` — the most recent structured operational events from the events table
 - `generated_at` timestamp
 
-Every key action also writes a structured operational event to DynamoDB (`audit_created`, `validation_failure`, `summary_generated`, `unsupported_route`, `unexpected_error`, plus AI-summary events when Bedrock is enabled). The CloudWatch dashboard visualises Lambda Invocations, Errors, Duration, and Throttles. The CloudWatch alarm on Lambda `Errors >= 1` notifies SNS.
+Every key action also writes a structured operational event to DynamoDB (`audit_created`, `validation_failure`, `summary_generated`, `unsupported_route`, `unexpected_error`, plus AI-summary events when Bedrock is enabled).
 
 ### Selected Practices Borrowed from Option 1 (More Complex Terraform)
 
@@ -66,7 +79,7 @@ The project does **not** claim full Option 1 completion — it intentionally avo
 - **CloudWatch dashboard** — visualised Lambda metrics
 - **Managed scaling** — through Lambda concurrency and DynamoDB on-demand capacity
 
-What is **not** included from Option 1 (and why): RDS (no relational data; DynamoDB suits the document model), customer-managed KMS keys (clean no-wildcard key policies are non-trivial; documented as a future improvement), ECS/EC2/Kubernetes (Lambda is the right primitive for this scale).
+What is **not** included from Option 1 (and why): RDS (no relational data; DynamoDB suits the document model), customer-managed KMS keys (clean no-wildcard key policies are non-trivial; documented in `DECISIONS.md`).
 
 ### Selected Practices Borrowed from Option 2 (Show Off AI Maturity)
 
@@ -333,7 +346,7 @@ Each module exposes only the outputs the root needs. The root computes a single 
 
 ### Why operational events are stored in DynamoDB
 
-Strict no-wildcard IAM means Lambda cannot be granted `logs:CreateLogStream` on `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` (wildcard log-stream ARN). Rather than grant this permission, structured operational events are written to a dedicated DynamoDB table with exact-ARN `dynamodb:PutItem`. This preserves full observability without compromising IAM hygiene — and operational events are queryable, structured, and durable.
+Strict no-wildcard IAM means Lambda cannot be granted `logs:CreateLogStream` on `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` (wildcard log-stream ARN). Rather than grant this permission, structured operational events are written directly to DynamoDB — which can be granted with exact table ARNs.
 
 ---
 
@@ -373,7 +386,7 @@ arn:aws:execute-api:{region}:{account}:{api-id}/{stage}/POST/summarize
 
 ## Optional Bedrock Enhancement
 
-The base project satisfies the core challenge plus Option 4: Operational Intelligence. As an optional AI maturity enhancement inspired by Option 2, `POST /summarize` can use Amazon Bedrock to generate an AI-written operational posture summary from DynamoDB audit data. **This feature is disabled by default** to keep the MVP deployable in accounts that may not have Bedrock model access configured. When enabled, Lambda receives `bedrock:InvokeModel` permission scoped to one exact model ARN.
+The base project satisfies the core challenge plus Option 4: Operational Intelligence. As an optional AI maturity enhancement inspired by Option 2, `POST /summarize` can use Amazon Bedrock to generate an AI-written platform posture summary.
 
 To enable:
 ```hcl
@@ -426,10 +439,12 @@ This project uses GitHub Copilot Chat / Copilot cloud agent as its AI-native wor
 
 ## Interview Demo Path
 
+> **Start here:** 👉 [http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/](http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/)
+
 1. `terraform init && terraform validate && terraform test` — show 9 Terraform tests pass
 2. `pytest app/` — show 30 Python tests pass
 3. `terraform apply` — deploy to AWS
-4. Open CloudFront URL — **Platform Ops Console** loads in browser
+4. Open the **Live Demo URL** above — **Platform Ops Console** loads in browser
 5. Submit a service audit from the UI form — observe Score + audit_id returned
 6. Click **Refresh Summary** — aggregated operational intelligence updates live
 7. Click **Generate AI Summary** — shows AI posture summary (stub or live Bedrock)
@@ -444,14 +459,16 @@ This project uses GitHub Copilot Chat / Copilot cloud agent as its AI-native wor
 
 ## Optional Static Developer Console
 
-The project includes a lightweight static UI in `web/` hosted on S3 + CloudFront. The API remains the primary service. The console exists to make the demo tangible and to demonstrate platform-as-a-product thinking without introducing a full frontend framework.
+The project includes a lightweight static UI in `web/` hosted on S3. The API remains the primary service. The console exists to make the demo tangible and to demonstrate platform-as-a-product thinking.
+
+**Live URL:** [http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/](http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com/)
 
 ### Architecture
 
 ```
-Browser → CloudFront (HTTPS) → S3 (private bucket, OAC) → index.html / styles.css / app.js
-                                                              ↓ fetch()
-                                                API Gateway → Lambda → DynamoDB
+Browser → S3 Static Website → index.html / styles.css / app.js
+                                    ↓ fetch()
+              API Gateway → Lambda → DynamoDB
 ```
 
 ### Console wireframe
@@ -497,24 +514,19 @@ Then edit the constant at the top of [web/app.js](web/app.js):
 const API_BASE_URL = "https://<id>.execute-api.us-east-1.amazonaws.com/dev";
 ```
 
-The GitHub Actions workflow automatically syncs `web/` to S3 and invalidates the CloudFront cache after every `terraform apply` run, so the URL is always current once initially configured.
+The GitHub Actions workflow automatically syncs `web/` to S3 after every `terraform apply` run, so the URL is always current once initially configured.
 
 ### Deploy or sync manually
 
 ```bash
 # Sync web assets
 aws s3 sync web/ s3://$(terraform -chdir=terraform output -raw web_bucket_name) --delete
-
-# Invalidate CloudFront cache
-aws cloudfront create-invalidation \
-  --distribution-id $(terraform -chdir=terraform output -raw cloudfront_distribution_id) \
-  --paths "/*"
 ```
 
 ### Enable / disable
 
 ```hcl
 # terraform/terraform.tfvars
-enable_static_console = true   # deploy S3 + CloudFront
+enable_static_console = true   # deploy S3 website
 enable_static_console = false  # no web infrastructure created
 ```
