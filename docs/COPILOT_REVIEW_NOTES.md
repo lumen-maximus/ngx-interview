@@ -56,3 +56,52 @@ Operational notes for human reviewers about the Copilot-generated portions of Pl
 - Surface `AI_REVIEW_CHECKLIST.md` to Copilot as required reading so generations self-correct against banned patterns
 - Add eval harness (CodeQL, `tflint`, `checkov`) that gates Copilot-generated diffs before merge
 - Track Copilot acceptance rate and rejection reasons in PR comments to refine `copilot-instructions.md` over time
+
+---
+
+## Post-merge iteration log (session 2)
+
+These notes document the second Copilot-assisted iteration session, which focused on browser
+compatibility fixes, UI/UX enhancement, and data realism.
+
+### Issues addressed
+
+| Problem | Root cause | AI-assisted fix |
+|---|---|---|
+| CORS blocked on all API calls | Lambda responses missing `Access-Control-Allow-Origin`; no OPTIONS preflight handlers | Added CORS headers to `_response()` in `handler.py`; added MOCK OPTIONS method/integration/response resources to all three API Gateway routes |
+| Favicon 404 | No icon file shipped with console | Created `web/favicon.svg` (SVG bar-chart icon) |
+| Browser Topics API noise | Chrome extension noise — unrelated to service code | No fix required; documented |
+| Summary looked empty | Only 9 seed records, generic names | Seeded 18 realistic NGX-branded services across prod/staging/dev with realistic scores, owners, findings |
+
+### UI/UX enhancements (Copilot agent spec → implementation)
+
+Copilot `ui-ux-designer` subagent reviewed the static console and returned a 28-point
+specification. All changes were applied in a single session:
+
+- API status pill (connected / unreachable) with live health probe on load
+- Animated score bar after every `POST /audit` submission
+- Skeleton loaders on all stat values and list items until data arrives
+- Live pulsing dot on Operational Summary heading
+- Score-based colour tinting on stat blocks (green ≥ 80, amber ≥ 50, red < 50)
+- Status-coloured list counts (`healthy` green / `degraded` amber / `unhealthy` red)
+- Environment dots (grey = dev, amber = staging, blue = prod)
+- Fade-up entrance animation on first summary load
+- Monospace AI hint code block in the 501 Bedrock-disabled response
+- NGX badge in header, updated placeholders throughout, footer timestamp
+
+### Course corrections during session 2
+
+| Copilot default | Human correction |
+|---|---|
+| `create_file` for existing files | Used terminal heredoc (`cat > file << 'EOF'`) — Copilot adapted without retry |
+| Attempted `git stash` with large working tree | Blocked by memory rule; used direct checkout instead |
+| Suggested merging `test` into `main` via direct push | Warned this would auto-close the open PR; human confirmed; PR auto-closed (GitHub platform behaviour, not agent error) |
+| `gh pr edit --base test` to retarget PR | GitHub rejected: branches identical; agent correctly pivoted to creating a new PR |
+
+### Key takeaway
+
+The most useful AI behaviour in session 2 was **spec → implementation fidelity**: the
+`ui-ux-designer` agent produced a precise 28-point spec, and the implementation agent applied
+all 28 changes correctly in a single pass with no hallucinated element IDs or broken selectors.
+The weakest point was **git state reasoning** — the agent lacked visibility into GitHub's
+merge-detection heuristics and needed human guidance on PR lifecycle.
