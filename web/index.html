@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Platform Ops Auditor</title>
+  <title>NGX — Platform Ops Auditor</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,9 +14,12 @@
   <header>
     <div class="header-inner">
       <div class="header-brand">
-        <div>
-          <h1>Platform Ops Auditor</h1>
-          <p class="subtitle">Internal Developer Platform &mdash; Operational Intelligence</p>
+        <div class="header-title">
+          <span class="ngx-badge">NGX</span>
+          <div>
+            <h1>Platform Ops Auditor</h1>
+            <p class="subtitle">NGX Platform Engineering &mdash; Operational Intelligence</p>
+          </div>
         </div>
         <span class="api-pill" id="api-status-pill">
           <span class="api-pill-dot"></span>
@@ -33,7 +36,7 @@
       <form id="audit-form" novalidate>
         <div class="field-row">
           <label for="service_name">Service Name</label>
-          <input type="text" id="service_name" name="service_name" placeholder="my-payments-api" required />
+          <input type="text" id="service_name" name="service_name" placeholder="ngx-payments-gateway" required />
         </div>
         <div class="field-row">
           <label for="environment">Environment</label>
@@ -53,11 +56,11 @@
         </div>
         <div class="field-row">
           <label for="repository">Repository</label>
-          <input type="text" id="repository" name="repository" placeholder="org/my-payments-api" />
+          <input type="text" id="repository" name="repository" placeholder="ngx/payments-gateway" />
         </div>
         <div class="field-row">
           <label for="owner">Owner</label>
-          <input type="text" id="owner" name="owner" placeholder="payments-team" />
+          <input type="text" id="owner" name="owner" placeholder="ngx-platform-team" />
         </div>
         <div class="field-row field-row--action">
           <button type="submit" id="submit-btn" aria-label="Submit service audit">Submit Audit</button>
@@ -143,7 +146,7 @@
 
   <footer>
     <div class="footer-meta">
-      <span>Platform Ops Auditor &mdash; AWS Lambda &bull; API Gateway &bull; DynamoDB</span>
+      <span>NGX Platform Ops Auditor &mdash; AWS Lambda &bull; API Gateway &bull; DynamoDB</span>
       <span id="footer-timestamp" class="footer-ts"></span>
     </div>
     <a class="footer-url" href="http://platform-ops-auditor-dev-web-830146370919.s3-website-us-east-1.amazonaws.com" target="_blank" rel="noopener">

@@ -49,6 +49,26 @@ header {
   gap: 1rem;
 }
 
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.ngx-badge {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #fff;
+  background: linear-gradient(135deg, #4f8ef7 0%, #7b5cf5 100%);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  flex-shrink: 0;
+  line-height: 1;
+  box-shadow: 0 0 14px rgba(79, 142, 247, 0.35);
+}
+
 header h1 {
   font-size: 1.35rem;
   font-weight: 700;
