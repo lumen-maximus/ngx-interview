@@ -6,26 +6,15 @@ resource "aws_s3_bucket" "web" {
   tags   = var.tags
 }
 
-# Block all public access when using CloudFront (OAC handles access)
-resource "aws_s3_bucket_public_access_block" "web_private" {
-  count  = var.use_cloudfront ? 1 : 0
+# Public access block — all true when using CloudFront (OAC handles access),
+# all false when using S3 static website hosting (public read required)
+resource "aws_s3_bucket_public_access_block" "web" {
   bucket = aws_s3_bucket.web.id
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# Allow public access when using S3 static website hosting (required for public read)
-resource "aws_s3_bucket_public_access_block" "web_public" {
-  count  = var.use_cloudfront ? 0 : 1
-  bucket = aws_s3_bucket.web.id
-
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = var.use_cloudfront ? true : false
+  block_public_policy     = var.use_cloudfront ? true : false
+  ignore_public_acls      = var.use_cloudfront ? true : false
+  restrict_public_buckets = var.use_cloudfront ? true : false
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "web" {
@@ -148,7 +137,7 @@ resource "aws_s3_bucket_website_configuration" "web" {
 resource "aws_s3_bucket_policy" "public_read" {
   count      = var.use_cloudfront ? 0 : 1
   bucket     = aws_s3_bucket.web.id
-  depends_on = [aws_s3_bucket_public_access_block.web_public]
+  depends_on = [aws_s3_bucket_public_access_block.web]
 
   policy = jsonencode({
     Version = "2012-10-17"
