@@ -134,3 +134,32 @@ New AWS accounts must be verified by AWS Support before CloudFront distributions
 When CloudFront account verification is granted, switching back is one tfvar change (`use_cloudfront = true`) and a `terraform apply`.
 
 **Why auth was omitted for MVP scope:** The console calls only `GET /summary` (read) and `POST /audit` / `POST /summarize` (write). For a demo, the blast radius of unauthenticated writes is a handful of DynamoDB items. For production, the recommended path is CloudFront signed URLs with a Lambda@Edge authorizer or an API Gateway API key — both can be added without changing the static files or the Lambda handler.
+
+## 10. Per-service drill-down: client-side `Scan` filter over a `service_name` GSI
+
+`GET /audit/{service_name}` returns the latest audit and full history for one service. The natural production design is a DynamoDB GSI on `service_name` queried directly. The MVP intentionally does **not** add that GSI.
+
+**Decision:** reuse the existing `Scan` over `audits` and filter client-side in the Lambda by `service_name`.
+
+**Why:**
+
+- The seeded demo dataset is <100 records. A scan completes in a single page well under any user-visible latency budget.
+- A GSI would introduce its own provisioning (PAY_PER_REQUEST mirrored on the index), eventual consistency considerations, and additional Terraform resources and tests — none of which earn their keep at MVP scale.
+- The scan path is already covered by `_scan_all` and existing tests; the new endpoint shares that path, so there is no new failure mode introduced.
+
+**What production should do instead:**
+
+- Add a GSI on `service_name` with projection `ALL` (or `KEYS_ONLY` + a follow-up `BatchGetItem` on hot items)
+- Replace the in-memory filter with `Table.query(IndexName="service_name-index", ...)`
+- Add an alarm on consumed read capacity for the index
+
+**IAM note — path-pattern Lambda permission is not a wildcard:**
+
+The new permission uses `source_arn = "${prefix}/${stage}/GET/audit/*"`. API Gateway requires this path pattern when the resource path contains a path parameter (`/audit/{service_name}`); the static value `/audit/{name}` would not match the runtime ARN. The grant is still tightly scoped to:
+
+- One specific REST API ID
+- One specific stage (`dev`)
+- One specific HTTP method (`GET`)
+- One specific parent path (`/audit/`)
+
+This satisfies the project's strict no-wildcard IAM rule, which targets `Action: "*"`, `Resource: "*"`, and unbounded ARN wildcards (e.g. `arn:aws:lambda:*:*:function:*`). The path pattern here is the minimum required by the AWS API Gateway → Lambda integration, not a security shortcut.

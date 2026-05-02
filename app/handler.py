@@ -183,24 +183,60 @@ def _scan_all(table_name: str) -> list[dict]:
 
 
 def _aggregate_audits(audit_items: list[dict]) -> dict:
-    """Compute aggregate statistics across audit records."""
-    total = len(audit_items)
-    avg_score = round(sum(int(i.get("score", 0)) for i in audit_items) / total) if total else 0
+    """Compute aggregate statistics and a deduped service catalog.
 
+    `services` contains the most-recent audit per `service_name`, so the
+    developer console can render a real catalog (not just counts).
+    `total_services_audited` reflects the number of distinct services so
+    repeated audits of the same service don't inflate the headline number.
+    """
     by_environment: dict[str, int] = {}
     by_status: dict[str, int] = {}
     finding_counter: Counter[str] = Counter()
+    latest_per_service: dict[str, dict] = {}
 
     for item in audit_items:
-        env = item.get("environment", "unknown")
-        by_environment[env] = by_environment.get(env, 0) + 1
-        st = item.get("status", "unknown")
-        by_status[st] = by_status.get(st, 0) + 1
         for finding in item.get("findings", []) or []:
             if isinstance(finding, str):
                 finding_counter[finding] += 1
 
-    top_findings = [f for f, _ in finding_counter.most_common(TOP_FINDINGS_LIMIT)]
+        name = item.get("service_name")
+        if not isinstance(name, str) or not name:
+            continue
+        created = int(item.get("created_at", 0) or 0)
+        existing = latest_per_service.get(name)
+        if existing is None or created >= int(existing.get("created_at", 0) or 0):
+            latest_per_service[name] = item
+
+    services: list[dict] = []
+    for item in latest_per_service.values():
+        env = item.get("environment", "unknown")
+        st = item.get("status", "unknown")
+        by_environment[env] = by_environment.get(env, 0) + 1
+        by_status[st] = by_status.get(st, 0) + 1
+        services.append(
+            {
+                "service_name": item.get("service_name", ""),
+                "environment": env,
+                "status": st,
+                "score": int(item.get("score", 0) or 0),
+                "owner": item.get("owner", "") or "",
+                "repository": item.get("repository", "") or "",
+                "audit_id": item.get("audit_id", ""),
+                "created_at": int(item.get("created_at", 0) or 0),
+                "findings_count": len(item.get("findings", []) or []),
+            }
+        )
+
+    services.sort(key=lambda s: s["created_at"], reverse=True)
+
+    total = len(services)
+    avg_score = round(sum(s["score"] for s in services) / total) if total else 0
+
+    top_findings = [
+        {"finding": f, "count": c}
+        for f, c in finding_counter.most_common(TOP_FINDINGS_LIMIT)
+    ]
 
     return {
         "total_services_audited": total,
@@ -208,6 +244,7 @@ def _aggregate_audits(audit_items: list[dict]) -> dict:
         "by_environment": by_environment,
         "by_status": by_status,
         "top_findings": top_findings,
+        "services": services,
     }
 
 
@@ -223,6 +260,8 @@ def _recent_operational_events(events: list[dict], limit: int = RECENT_EVENTS_LI
             "event_type": e.get("event_type", ""),
             "route": e.get("route", ""),
             "method": e.get("method", ""),
+            "message": e.get("message", ""),
+            "related_audit_id": e.get("related_audit_id", ""),
             "created_at": int(e.get("created_at", 0)),
         }
         for e in sorted_events[:limit]
@@ -236,6 +275,10 @@ def _recent_operational_events(events: list[dict], limit: int = RECENT_EVENTS_LI
 
 def build_bedrock_prompt(aggregate: dict) -> str:
     """Build a concise natural-language prompt from aggregate operational data."""
+    findings_for_prompt = [
+        f["finding"] if isinstance(f, dict) else f
+        for f in aggregate.get("top_findings", [])
+    ]
     return (
         "You are a platform engineering assistant. "
         "Write a short (under 120 words) operational posture summary for the platform "
@@ -244,7 +287,7 @@ def build_bedrock_prompt(aggregate: dict) -> str:
         f"- Average operational score: {aggregate['average_score']}\n"
         f"- Services by environment: {json.dumps(aggregate['by_environment'])}\n"
         f"- Services by status: {json.dumps(aggregate['by_status'])}\n"
-        f"- Top findings: {json.dumps(aggregate['top_findings'])}\n"
+        f"- Top findings: {json.dumps(findings_for_prompt)}\n"
         "Be concise and actionable. Highlight risk areas if any."
     )
 
@@ -372,6 +415,79 @@ def _handle_get_summary(event: dict) -> dict:  # noqa: ARG001
     )
 
 
+def _handle_get_audit_by_service(service_name: str) -> dict:
+    """Return all audit records for a single service, newest first.
+
+    Uses a Scan with a server-side FilterExpression because the table is keyed
+    by `audit_id` (no GSI on `service_name`). For the demo dataset this is
+    perfectly cheap; in production a `service_name`-indexed GSI would be
+    preferable.
+    """
+    if not service_name:
+        return _response(400, {"error": "service_name path parameter is required"})
+
+    # Demo dataset is small (<100 records); a client-side filter on Scan keeps
+    # the implementation simple and avoids needing a `service_name` GSI.
+    # See DECISIONS.md for the GSI vs Scan trade-off.
+    all_audits = _scan_all(AUDIT_TABLE)
+    items = [i for i in all_audits if i.get("service_name") == service_name]
+    items.sort(key=lambda i: int(i.get("created_at", 0) or 0), reverse=True)
+
+    if not items:
+        _store_event(
+            "audit_not_found",
+            f"/audit/{service_name}",
+            "GET",
+            f"No audits recorded for service '{service_name}'",
+        )
+        return _response(
+            404,
+            {
+                "error": "service_not_found",
+                "message": f"No audits recorded for service '{service_name}'",
+            },
+        )
+
+    latest = items[0]
+    history = [
+        {
+            "audit_id": i.get("audit_id", ""),
+            "created_at": int(i.get("created_at", 0) or 0),
+            "environment": i.get("environment", ""),
+            "status": i.get("status", ""),
+            "score": int(i.get("score", 0) or 0),
+            "findings": list(i.get("findings", []) or []),
+        }
+        for i in items
+    ]
+
+    _store_event(
+        "audit_lookup",
+        f"/audit/{service_name}",
+        "GET",
+        f"Returned {len(items)} audit record(s) for service '{service_name}'",
+    )
+
+    return _response(
+        200,
+        {
+            "service_name": service_name,
+            "latest": {
+                "audit_id": latest.get("audit_id", ""),
+                "environment": latest.get("environment", ""),
+                "status": latest.get("status", ""),
+                "score": int(latest.get("score", 0) or 0),
+                "repository": latest.get("repository", "") or "",
+                "owner": latest.get("owner", "") or "",
+                "findings": list(latest.get("findings", []) or []),
+                "created_at": int(latest.get("created_at", 0) or 0),
+            },
+            "audit_count": len(items),
+            "history": history,
+        },
+    )
+
+
 def _handle_post_summarize(event: dict) -> dict:  # noqa: ARG001
     if not ENABLE_BEDROCK_SUMMARY:
         _store_event(
@@ -421,6 +537,7 @@ def _handle_post_summarize(event: dict) -> dict:  # noqa: ARG001
 def handler(event: dict, context: object) -> dict:  # noqa: ARG001
     method = event.get("httpMethod", "")
     path = event.get("path", "")
+    path_parameters = event.get("pathParameters") or {}
 
     try:
         if method == "POST" and path == "/audit":
@@ -428,6 +545,9 @@ def handler(event: dict, context: object) -> dict:  # noqa: ARG001
 
         if method == "GET" and path == "/summary":
             return _handle_get_summary(event)
+
+        if method == "GET" and path_parameters.get("service_name"):
+            return _handle_get_audit_by_service(path_parameters["service_name"])
 
         if method == "POST" and path == "/summarize":
             return _handle_post_summarize(event)
