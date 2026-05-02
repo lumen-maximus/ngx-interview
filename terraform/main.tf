@@ -55,6 +55,7 @@ module "api" {
 module "observability" {
   source = "./modules/observability"
 
+  aws_region           = var.aws_region
   lambda_function_name = module.lambda.function_name
   name_prefix          = local.name_prefix
   tags                 = local.tags

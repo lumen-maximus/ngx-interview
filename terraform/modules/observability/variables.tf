@@ -8,6 +8,11 @@ variable "lambda_function_name" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region for CloudWatch dashboard widgets"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags applied to observability resources"
   type        = map(string)

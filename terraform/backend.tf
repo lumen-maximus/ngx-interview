@@ -3,7 +3,7 @@ terraform {
     bucket         = "ngx-interview-tfstate-830146370919"
     key            = "ngx-interview/platform-ops-auditor.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "ngx-interview-tflock"
+    use_lockfile   = true
     encrypt        = true
   }
 }
