@@ -97,6 +97,10 @@ run "iam_policy_resources_have_no_wildcards" {
 run "iam_policy_excludes_bedrock_when_disabled" {
   command = apply
 
+  variables {
+    enable_bedrock_summary = false
+  }
+
   assert {
     condition     = !contains(module.iam.policy_actions, "bedrock:InvokeModel")
     error_message = "Bedrock permission must not appear when enable_bedrock_summary is false"
