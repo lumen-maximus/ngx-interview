@@ -789,6 +789,7 @@ body.modal-open          { overflow: hidden; }
   backdrop-filter: blur(2px);
   animation: detail-fade-in 0.15s ease;
 }
+.detail-overlay[hidden] { display: none !important; }
 .detail-panel {
   background: var(--card);
   border: 1px solid var(--border);
