@@ -120,4 +120,17 @@ The project explicitly does **not** claim full Option 2 completion unless Bedroc
 - The entire infra is wrapped in `count = var.enable_static_console ? 1 : 0` so it is opt-in. No web infrastructure is created unless the flag is set.
 - GitHub Actions syncs `web/` after `terraform apply` and creates a CloudFront invalidation — deploy is fully automated, consistent with the immutable infrastructure principle.
 
+**`use_cloudfront = false` fallback (S3 static website hosting):**
+
+New AWS accounts must be verified by AWS Support before CloudFront distributions can be created. Rather than blocking the demo, the module supports a `use_cloudfront = false` flag that switches to S3 static website hosting (public read policy). The tradeoffs are accepted for a demo context:
+
+| | CloudFront (default) | S3 website (fallback) |
+|---|---|---|
+| HTTPS | Yes (enforced) | No (HTTP only) |
+| Caching | Edge cache, TTL-controlled | None |
+| Access control | OAC — private bucket | Public read bucket policy |
+| Account restriction | Requires AWS verification | None |
+
+When CloudFront account verification is granted, switching back is one tfvar change (`use_cloudfront = true`) and a `terraform apply`.
+
 **Why auth was omitted for MVP scope:** The console calls only `GET /summary` (read) and `POST /audit` / `POST /summarize` (write). For a demo, the blast radius of unauthenticated writes is a handful of DynamoDB items. For production, the recommended path is CloudFront signed URLs with a Lambda@Edge authorizer or an API Gateway API key — both can be added without changing the static files or the Lambda handler.

@@ -39,18 +39,23 @@ output "sns_topic_arn" {
 }
 
 output "web_bucket_name" {
-  description = "S3 bucket name for static console assets (empty when enable_static_console = false)"
+  description = "S3 bucket name for web assets (empty when enable_static_console = false)"
   value       = length(module.web) > 0 ? module.web[0].bucket_name : ""
 }
 
 output "cloudfront_url" {
-  description = "CloudFront URL for the static developer console (empty when enable_static_console = false)"
+  description = "CloudFront URL for the static developer console (empty when use_cloudfront = false or enable_static_console = false)"
   value       = length(module.web) > 0 ? module.web[0].cloudfront_url : ""
 }
 
 output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID for cache invalidation (empty when enable_static_console = false)"
+  description = "CloudFront distribution ID for cache invalidation (empty when use_cloudfront = false or enable_static_console = false)"
   value       = length(module.web) > 0 ? module.web[0].cloudfront_distribution_id : ""
+}
+
+output "console_url" {
+  description = "Developer console URL — CloudFront if enabled, S3 website otherwise"
+  value       = length(module.web) > 0 ? module.web[0].console_url : ""
 }
 
 output "dashboard_name" {

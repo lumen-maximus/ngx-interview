@@ -41,7 +41,13 @@ variable "bedrock_model_arn" {
 }
 
 variable "enable_static_console" {
-  description = "Deploy the optional S3 + CloudFront static developer console"
+  description = "Deploy the optional static developer console (S3 + optional CloudFront)"
   type        = bool
   default     = false
+}
+
+variable "use_cloudfront" {
+  description = "Use CloudFront in front of the S3 console bucket. Set to false on new AWS accounts where CloudFront is not yet verified."
+  type        = bool
+  default     = true
 }
