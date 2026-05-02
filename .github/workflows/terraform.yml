@@ -13,8 +13,10 @@ on:
         required: false
         default: "false"
 
+# OIDC requires id-token: write. contents: read is least-privilege for checkout.
 permissions:
   contents: read
+  id-token: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -59,11 +61,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Check AWS_ROLE_ARN configured
+        id: aws_check
+        run: |
+          if [ -z "${{ vars.AWS_ROLE_ARN }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AWS_ROLE_ARN repository variable is not set. Skipping AWS-authenticated steps. See README for OIDC setup."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS Credentials (OIDC)
+        if: steps.aws_check.outputs.configured == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-ngx-interview-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -73,19 +86,26 @@ jobs:
         run: terraform fmt -check -recursive
 
       - name: Terraform Init
+        if: steps.aws_check.outputs.configured == 'true'
         run: terraform init
+
+      - name: Terraform Init (no-backend, validation only)
+        if: steps.aws_check.outputs.configured != 'true'
+        run: terraform init -backend=false
 
       - name: Terraform Validate
         run: terraform validate
 
       - name: Terraform Test
+        if: steps.aws_check.outputs.configured == 'true'
         run: terraform test
 
       - name: Terraform Plan
+        if: steps.aws_check.outputs.configured == 'true'
         run: terraform plan -out=tfplan
 
       - name: Upload Terraform Plan
-        if: success()
+        if: steps.aws_check.outputs.configured == 'true' && success()
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
@@ -93,5 +113,5 @@ jobs:
           retention-days: 7
 
       - name: Terraform Apply
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true' }}
+        if: ${{ steps.aws_check.outputs.configured == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true' }}
         run: terraform apply -auto-approve tfplan
