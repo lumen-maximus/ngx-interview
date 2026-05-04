@@ -49,7 +49,7 @@ Teams `POST` audit records for their services. The platform team queries `GET /s
 
 - [x] **AI-native development workflow** — GitHub Copilot Chat / Copilot cloud agent used throughout; documented in `docs/AI_WORKFLOW.md`
 - [x] **Terraform and CI/CD** — Modular Terraform with GitHub Actions pipeline (Python tests, fmt, validate, test, plan, apply)
-- [x] **Automation service** — REST API with `POST /audit` and `GET /summary` backed by Lambda + DynamoDB
+- [x] **Automation service** — REST API with `POST /audit`, `GET /audit/{service_name}`, and `GET /summary` backed by Lambda + DynamoDB
 - [x] **Documentation** — `README.md`, `DECISIONS.md`, `docs/`, architecture diagram, `copilot-instructions.md`
 
 ### Official Additional Challenge: Option 4 — Operational Intelligence
@@ -96,7 +96,7 @@ The project does **not** claim full Option 2 completion. Practices borrowed:
 
 ```mermaid
 flowchart TD
-    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
+    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /audit/{service_name}\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
     APIGW -->|"Lambda Proxy Integration"| Lambda["AWS Lambda\n(Python 3.12)"]
     Lambda -->|"PutItem"| AuditDB["DynamoDB\nAudit Records"]
     Lambda -->|"PutItem"| EventsDB["DynamoDB\nOperational Events"]
@@ -188,6 +188,37 @@ Aggregate operational intelligence from all audit records and recent operational
 }
 ```
 
+### GET /audit/{service_name}
+
+Return the full audit history for a single service, with the most recent record surfaced as `latest`. Powers the catalog drill-down in the web console (click any row in **Service Catalog**).
+
+**Successful response (HTTP 200)**:
+```json
+{
+  "service_name": "ngx-payments-gateway",
+  "audit_count": 3,
+  "latest": {
+    "audit_id": "7d3f...",
+    "environment": "prod",
+    "status": "healthy",
+    "score": 95,
+    "repository": "ngx/payments-gateway",
+    "owner": "ngx-platform-team",
+    "findings": ["service owner captured", "repository ownership captured"],
+    "created_at": 1714495680
+  },
+  "history": [
+    { "audit_id": "7d3f...", "created_at": 1714495680, "environment": "prod", "status": "healthy", "score": 95, "findings": [...] },
+    { "audit_id": "4a18...", "created_at": 1714402100, "environment": "prod", "status": "degraded", "score": 70, "findings": [...] }
+  ]
+}
+```
+
+**When the service has no audits** — HTTP 404:
+```json
+{ "error": "service_not_found", "message": "No audits recorded for service 'foo'" }
+```
+
 ### POST /summarize (optional, disabled by default)
 
 Generate an AI-written platform operational posture summary using Amazon Bedrock.
@@ -238,6 +269,12 @@ curl -s -X POST "${BASE_URL}/audit" \
 
 ```bash
 curl -s "${BASE_URL}/summary" | jq .
+```
+
+### Drill into a single service
+
+```bash
+curl -s "${BASE_URL}/audit/payments-api" | jq .
 ```
 
 ### Trigger a validation failure (HTTP 400)
@@ -313,7 +350,7 @@ The workflow has explicit `permissions: contents: read` (least privilege for the
 | `modules/data` | DynamoDB audit + events tables (PAY_PER_REQUEST, SSE, PITR) |
 | `modules/iam` | Lambda execution role + exact-ARN policy (DynamoDB + optional Bedrock) |
 | `modules/lambda` | `archive_file` zip + `aws_lambda_function` (python3.12, ≤10s timeout) |
-| `modules/api` | REST API, three resources (`/audit`, `/summary`, `/summarize`), exact-ARN Lambda permissions |
+| `modules/api` | REST API, four resources (`/audit`, `/audit/{service_name}`, `/summary`, `/summarize`), exact-ARN Lambda permissions |
 | `modules/observability` | SNS topic, CloudWatch alarm (Errors ≥ 1), CloudWatch dashboard |
 
 Each module exposes only the outputs the root needs. The root computes a single `name_prefix` and a `tags` map and passes them to every module.

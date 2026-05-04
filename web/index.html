@@ -78,7 +78,10 @@
     <section class="card" id="summary-section">
       <div class="card-header">
         <h2><span class="live-dot" aria-hidden="true"></span>Operational Summary</h2>
-        <button id="refresh-btn" type="button">Refresh</button>
+        <div class="card-header-actions">
+          <span id="summary-generated-at" class="generated-at" hidden></span>
+          <button id="refresh-btn" type="button">Refresh</button>
+        </div>
       </div>
       <div id="summary-result" class="result-box" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       <div id="summary-content">
@@ -130,6 +133,49 @@
       </div>
     </section>
 
+    <!-- Service Catalog -->
+    <section class="card" id="catalog-section">
+      <div class="card-header">
+        <h2>Service Catalog</h2>
+        <span id="catalog-count" class="generated-at"></span>
+      </div>
+      <div class="filter-bar" role="toolbar" aria-label="Service filters">
+        <div class="filter-group" role="group" aria-label="Environment">
+          <span class="filter-label">Env</span>
+          <button type="button" class="filter-pill is-active" data-filter="env" data-value="all">All</button>
+          <button type="button" class="filter-pill" data-filter="env" data-value="prod">prod</button>
+          <button type="button" class="filter-pill" data-filter="env" data-value="staging">staging</button>
+          <button type="button" class="filter-pill" data-filter="env" data-value="dev">dev</button>
+        </div>
+        <div class="filter-group" role="group" aria-label="Status">
+          <span class="filter-label">Status</span>
+          <button type="button" class="filter-pill is-active" data-filter="status" data-value="all">All</button>
+          <button type="button" class="filter-pill" data-filter="status" data-value="unhealthy">unhealthy</button>
+          <button type="button" class="filter-pill" data-filter="status" data-value="degraded">degraded</button>
+          <button type="button" class="filter-pill" data-filter="status" data-value="healthy">healthy</button>
+        </div>
+        <input type="search" id="catalog-search" placeholder="Search service or owner&hellip;" aria-label="Search" />
+      </div>
+      <div class="table-wrap">
+        <table class="catalog-table" aria-label="Service catalog">
+          <thead>
+            <tr>
+              <th scope="col">Service</th>
+              <th scope="col">Env</th>
+              <th scope="col">Status</th>
+              <th scope="col">Score</th>
+              <th scope="col">Owner</th>
+              <th scope="col">Repository</th>
+              <th scope="col">Last Audited</th>
+            </tr>
+          </thead>
+          <tbody id="catalog-body">
+            <tr><td colspan="7" class="empty-cell">Loading catalog&hellip;</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- AI Summary -->
     <section class="card" id="ai-section">
       <div class="card-header">
@@ -142,7 +188,63 @@
         <p class="ai-meta" id="ai-meta"></p>
       </div>
     </section>
+    <!-- API Reference -->
+    <section class="card" id="api-section">
+      <div class="card-header">
+        <h2>API Reference</h2>
+        <span class="generated-at" id="api-base-url"></span>
+      </div>
+      <p class="api-blurb">Self-service endpoints for teams. All requests/responses are JSON. CORS is enabled for browser clients.</p>
+      <div class="api-endpoint">
+        <div class="api-endpoint-header">
+          <span class="api-verb api-verb--post">POST</span>
+          <code>/audit</code>
+          <span class="api-endpoint-blurb">Submit a service audit. Returns score and findings.</span>
+        </div>
+        <pre class="code-block" id="curl-audit"></pre>
+      </div>
+      <div class="api-endpoint">
+        <div class="api-endpoint-header">
+          <span class="api-verb api-verb--get">GET</span>
+          <code>/summary</code>
+          <span class="api-endpoint-blurb">Aggregated platform posture: services, findings, recent events.</span>
+        </div>
+        <pre class="code-block" id="curl-summary"></pre>
+      </div>
+      <div class="api-endpoint">
+        <div class="api-endpoint-header">
+          <span class="api-verb api-verb--get">GET</span>
+          <code>/audit/{service_name}</code>
+          <span class="api-endpoint-blurb">Latest audit + full history for one service. Powers the catalog drill-down.</span>
+        </div>
+        <pre class="code-block" id="curl-audit-by-service"></pre>
+      </div>
+      <div class="api-endpoint">
+        <div class="api-endpoint-header">
+          <span class="api-verb api-verb--post">POST</span>
+          <code>/summarize</code>
+          <span class="api-endpoint-blurb">Bedrock-generated posture narrative (501 when disabled).</span>
+        </div>
+        <pre class="code-block" id="curl-summarize"></pre>
+      </div>
+    </section>
   </main>
+
+  <!-- Service detail modal -->
+  <div id="service-detail-overlay" class="detail-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="detail-panel">
+      <header class="detail-header">
+        <div>
+          <span class="detail-eyebrow">Service Detail</span>
+          <h3 id="detail-title">&mdash;</h3>
+        </div>
+        <button type="button" id="detail-close" class="detail-close" aria-label="Close detail">&times;</button>
+      </header>
+      <div id="detail-body" class="detail-body">
+        <p class="muted">Loading&hellip;</p>
+      </div>
+    </div>
+  </div>
 
   <footer>
     <div class="footer-meta">

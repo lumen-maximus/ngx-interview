@@ -1,5 +1,5 @@
 flowchart TD
-    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
+    Dev["👩‍💻 Developer"] -->|"POST /audit\nGET /audit/{service_name}\nGET /summary\nPOST /summarize (optional)"| APIGW["REST API Gateway"]
     APIGW -->|"Lambda Proxy Integration"| Lambda["AWS Lambda\n(Python 3.12)"]
     Lambda -->|"PutItem"| AuditDB["DynamoDB\nAudit Records"]
     Lambda -->|"PutItem"| EventsDB["DynamoDB\nOperational Events"]

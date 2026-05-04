@@ -123,16 +123,20 @@ class TestGetSummary(unittest.TestCase):
     def test_returns_200_with_aggregates(self):
         items = [
             {
+                "service_name": "alpha",
                 "score": 95,
                 "environment": "dev",
                 "status": "healthy",
                 "findings": ["service owner captured", "repository ownership captured"],
+                "created_at": 1000,
             },
             {
+                "service_name": "bravo",
                 "score": 85,
                 "environment": "prod",
                 "status": "degraded",
                 "findings": ["service owner missing", "repository metadata missing"],
+                "created_at": 2000,
             },
         ]
         result = self._call(items)
@@ -145,16 +149,41 @@ class TestGetSummary(unittest.TestCase):
         self.assertIn("top_findings", resp)
         self.assertIn("recent_operational_events", resp)
         self.assertIn("generated_at", resp)
+        self.assertIn("services", resp)
+        # Services sorted desc by created_at
+        self.assertEqual([s["service_name"] for s in resp["services"]], ["bravo", "alpha"])
 
     def test_top_findings_ranked_by_frequency(self):
         items = [
-            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing", "X"]},
-            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing", "Y"]},
-            {"score": 80, "environment": "dev", "status": "healthy", "findings": ["service owner missing"]},
+            {"service_name": "a", "score": 80, "environment": "dev", "status": "healthy",
+             "findings": ["service owner missing", "X"], "created_at": 1},
+            {"service_name": "b", "score": 80, "environment": "dev", "status": "healthy",
+             "findings": ["service owner missing", "Y"], "created_at": 2},
+            {"service_name": "c", "score": 80, "environment": "dev", "status": "healthy",
+             "findings": ["service owner missing"], "created_at": 3},
         ]
         result = self._call(items)
         resp = json.loads(result["body"])
-        self.assertEqual(resp["top_findings"][0], "service owner missing")
+        top = resp["top_findings"][0]
+        self.assertEqual(top["finding"], "service owner missing")
+        self.assertEqual(top["count"], 3)
+
+    def test_services_dedupes_by_latest_audit(self):
+        items = [
+            {"service_name": "dupe", "score": 60, "environment": "dev", "status": "degraded",
+             "findings": [], "created_at": 100},
+            {"service_name": "dupe", "score": 90, "environment": "dev", "status": "healthy",
+             "findings": [], "created_at": 500},
+            {"service_name": "other", "score": 70, "environment": "prod", "status": "degraded",
+             "findings": [], "created_at": 200},
+        ]
+        result = self._call(items)
+        resp = json.loads(result["body"])
+        # Dedup: 2 distinct services, latest audit per service used
+        self.assertEqual(resp["total_services_audited"], 2)
+        dupe = next(s for s in resp["services"] if s["service_name"] == "dupe")
+        self.assertEqual(dupe["score"], 90)
+        self.assertEqual(dupe["status"], "healthy")
 
     def test_recent_operational_events_sorted_desc(self):
         events = [
@@ -213,6 +242,62 @@ class TestUnsupportedRoutes(unittest.TestCase):
         self.assertEqual(result["statusCode"], 405)
 
 
+class TestGetAuditByService(unittest.TestCase):
+    """Tests for GET /audit/{service_name}."""
+
+    def _call(self, service_name, audit_items):
+        event = {
+            "httpMethod": "GET",
+            "path": f"/audit/{service_name}",
+            "pathParameters": {"service_name": service_name},
+            "body": None,
+        }
+        factory, audit_table, events_table = _patch_tables(audit_items=audit_items)
+        with patch.object(handler.dynamodb, "Table", side_effect=factory):
+            result = handler.handler(event, None)
+        return result, events_table
+
+    def test_returns_200_with_history(self):
+        items = [
+            {"audit_id": "a1", "service_name": "ngx-payments", "score": 60,
+             "environment": "prod", "status": "degraded",
+             "findings": ["repository metadata missing"], "created_at": 100,
+             "owner": "platform-team", "repository": "ngx/payments"},
+            {"audit_id": "a2", "service_name": "ngx-payments", "score": 90,
+             "environment": "prod", "status": "healthy",
+             "findings": [], "created_at": 500,
+             "owner": "platform-team", "repository": "ngx/payments"},
+            {"audit_id": "a3", "service_name": "other", "score": 80,
+             "environment": "dev", "status": "healthy",
+             "findings": [], "created_at": 300},
+        ]
+        result, events_table = self._call("ngx-payments", items)
+        self.assertEqual(result["statusCode"], 200)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["service_name"], "ngx-payments")
+        self.assertEqual(resp["audit_count"], 2)
+        # Latest is the most recent (created_at 500)
+        self.assertEqual(resp["latest"]["audit_id"], "a2")
+        self.assertEqual(resp["latest"]["score"], 90)
+        self.assertEqual(resp["latest"]["status"], "healthy")
+        # History sorted desc
+        self.assertEqual([h["audit_id"] for h in resp["history"]], ["a2", "a1"])
+        # audit_lookup operational event recorded
+        events_table.put_item.assert_called_once()
+
+    def test_returns_404_when_no_audits_for_service(self):
+        items = [
+            {"audit_id": "a1", "service_name": "ngx-other", "score": 80,
+             "environment": "dev", "status": "healthy", "created_at": 100},
+        ]
+        result, events_table = self._call("missing-service", items)
+        self.assertEqual(result["statusCode"], 404)
+        resp = json.loads(result["body"])
+        self.assertEqual(resp["error"], "service_not_found")
+        # audit_not_found event recorded
+        events_table.put_item.assert_called_once()
+
+
 class TestPostSummarize(unittest.TestCase):
     """Tests for POST /summarize — optional Bedrock-powered summary."""
 
@@ -265,7 +350,7 @@ class TestPostSummarize(unittest.TestCase):
             "average_score": 85,
             "by_environment": {"dev": 2, "prod": 1},
             "by_status": {"healthy": 2, "degraded": 1},
-            "top_findings": ["service owner missing"],
+            "top_findings": [{"finding": "service owner missing", "count": 1}],
         }
         prompt = handler.build_bedrock_prompt(aggregate)
         self.assertIn("3", prompt)
@@ -337,18 +422,22 @@ class TestAggregation(unittest.TestCase):
         self.assertEqual(agg["total_services_audited"], 0)
         self.assertEqual(agg["average_score"], 0)
         self.assertEqual(agg["top_findings"], [])
+        self.assertEqual(agg["services"], [])
 
     def test_aggregate_audits_counts(self):
         items = [
-            {"score": 90, "environment": "dev", "status": "healthy", "findings": ["a", "b"]},
-            {"score": 80, "environment": "dev", "status": "degraded", "findings": ["a"]},
+            {"service_name": "a", "score": 90, "environment": "dev", "status": "healthy",
+             "findings": ["a", "b"], "created_at": 1},
+            {"service_name": "b", "score": 80, "environment": "dev", "status": "degraded",
+             "findings": ["a"], "created_at": 2},
         ]
         agg = handler._aggregate_audits(items)
         self.assertEqual(agg["total_services_audited"], 2)
         self.assertEqual(agg["average_score"], 85)
         self.assertEqual(agg["by_environment"], {"dev": 2})
         self.assertEqual(agg["by_status"], {"healthy": 1, "degraded": 1})
-        self.assertEqual(agg["top_findings"][0], "a")
+        self.assertEqual(agg["top_findings"][0]["finding"], "a")
+        self.assertEqual(agg["top_findings"][0]["count"], 2)
 
 
 if __name__ == "__main__":
